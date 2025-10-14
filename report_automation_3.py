@@ -23,9 +23,6 @@ report_id = "00OUI00000EsGR72AN"
 
 try:
     report_data = sf.restful(f'analytics/reports/{report_id}', params={'includeDetails': 'true'})
-    print("✅ Successfully fetched report data!")
-    print("Report name:", report_data.get('reportMetadata', {}).get('name', 'Unknown'))
-    print("Number of rows:", len(report_data.get('factMap', {}).get('T!T', {}).get('rows', [])))
 except Exception as e:
     print("❌ Error fetching report:", e)
 
@@ -62,13 +59,16 @@ existing_cases = set(output_df['Case Number'].dropna().astype(str).str.strip().t
 
 # --- Process each Salesforce row ---
 new_rows_added = 0
+rows_processed = 0
 
 for row in report_rows:
+    rows_processed += 1
     cells = row.get('dataCells', [])
     case_number = str(cells[3].get('label', '')).strip()
 
-    # Skip if already in table — print nothing
+    # Skip if already in table
     if case_number in existing_cases:
+        print(f"Row not added — Case Number {case_number} already in table")
         continue
 
     description = str(cells[4].get('label', ''))
@@ -86,7 +86,7 @@ for row in report_rows:
             supplier = suppliers_list[match_index].strip() if match_index < len(suppliers_list) else ""
             most_common_source = supplier if supplier else man_sites_list[match_index]
         except Exception as e:
-            print(f"⚠️ Match error for description '{description}': {e}")
+            pass
 
     # --- Create new row ---
     new_row = [
@@ -108,16 +108,11 @@ for row in report_rows:
     # --- Append new row into table ---
     next_row = table_out.range.last_cell.row + 1
     sheet_out.range(f"A{next_row}").value = new_row
-
-    # Resize table to include new row
     table_out.resize(table_out.range.expand('table'))
 
     existing_cases.add(case_number)
     new_rows_added += 1
-    print(f"✅ Added new row for Case Number {case_number} with Source '{most_common_source}'")
+    print(f"Row added — Case Number {case_number}")
 
 # --- Summary ---
-if new_rows_added == 0:
-    print("\n✅ Table is up to date — no new cases found.")
-else:
-    print(f"\n✅ Finished processing. Added {new_rows_added} new row(s).")
+print(f"\n✅ Finished processing. Total rows processed: {rows_processed}, New rows added: {new_rows_added}")

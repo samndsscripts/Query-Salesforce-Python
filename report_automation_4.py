@@ -3,11 +3,9 @@ import csv
 from simple_salesforce import Salesforce
 import json
 from tabulate import tabulate
-from openpyxl import load_workbook
 import pandas as pd
 import xlwings as xw
 import re
-from collections import Counter
 from rapidfuzz import process
 
 # ----- Salesforce login -----
@@ -47,13 +45,18 @@ def normalize(text):
 # --- Get reference to output table ---
 sheet_out = wb.sheets['test']
 table_out = sheet_out.tables['test']
-output_range = table_out.range
-output_df = pd.DataFrame(output_range.value[1:], columns=output_range.value[0])
+output_df = pd.DataFrame(table_out.range.value[1:], columns=table_out.range.value[0])
 
-# --- Track existing case numbers as integers ---
-existing_cases = set(
-    output_df['Case Number'].dropna().apply(lambda x: int(float(str(x).strip()))).tolist()
-)
+# --- Robust case number parser ---
+def parse_case_number(x):
+    try:
+        return int(float(str(x).strip()))
+    except:
+        return None
+
+# --- Track existing case numbers ---
+parsed_cases = output_df['Case Number'].apply(parse_case_number).tolist()
+existing_cases = set(filter(None, parsed_cases))
 
 # --- Process each Salesforce row ---
 new_rows_to_add = []
@@ -62,18 +65,13 @@ for row in report_rows:
     cells = row.get('dataCells', [])
 
     # Convert Salesforce Case Number to integer robustly
-    case_number_str = str(cells[3].get('label', '')).strip()
-    if not case_number_str.isdigit():
-        continue
-    case_number = int(case_number_str)
-
-    # --- EARLY SKIP: If already exists, do NOT continue ---
-    if case_number in existing_cases:
-        continue  # skip fuzzy matching and row prep entirely
+    case_number = parse_case_number(cells[3].get('label', ''))
+    if case_number is None or case_number in existing_cases:
+        continue  # skip if invalid or already exists
 
     description = str(cells[4].get('label', ''))
 
-    # --- Match to supplier/manufacturer (only for new rows) ---
+    # --- Match to supplier/manufacturer ---
     normalized_description = normalize(description)
     normalized_stock_codes = [normalize(code) for code in stock_codes_list]
     matches = process.extract(normalized_description, normalized_stock_codes, limit=1)
@@ -105,15 +103,22 @@ for row in report_rows:
         most_common_source          # Source
     ]
 
-    # --- Append only new rows ---
     new_rows_to_add.append(new_row)
     existing_cases.add(case_number)
 
-# --- Append all new rows at once to Excel ---
+# --- Append all new rows using the working method ---
 if new_rows_to_add:
-    first_empty_row = table_out.range.last_cell.row + 1
-    sheet_out.range(f"A{first_empty_row}").value = new_rows_to_add
-    table_out.resize(table_out.range.expand('table'))
+    current_table_rows = table_out.range.rows.count
+    current_table_cols = table_out.range.columns.count
+
+    # Write new rows below the table
+    start_row = table_out.range.row + current_table_rows
+    sheet_out.range((start_row, table_out.range.column)).value = new_rows_to_add
+
+    # Resize table to include the new rows
+    table_out.resize(sheet_out.range((table_out.range.row, table_out.range.column),
+                                     (table_out.range.row + current_table_rows + len(new_rows_to_add) - 1,
+                                      table_out.range.column + current_table_cols - 1)))
 
 # --- Output arrays for inspection ---
 rows_added_array = [row[3] for row in new_rows_to_add]  # Only Case Numbers
@@ -121,3 +126,4 @@ existing_cases_array = list(existing_cases)
 
 print("New rows to add (rows_added_array):", rows_added_array)
 print("All case numbers including existing (existing_cases_array):", existing_cases_array)
+

@@ -58,7 +58,7 @@ output_range = table_out.range
 output_df = pd.DataFrame(output_range.value[1:], columns=output_range.value[0])
 
 # Track existing case numbers
-existing_cases = output_df['Case Number'].dropna().astype(str).tolist()
+existing_cases = set(output_df['Case Number'].dropna().astype(str).str.strip().tolist())
 
 # --- Process each Salesforce row ---
 new_rows_added = 0
@@ -83,9 +83,8 @@ for row in report_rows:
         best_match = matches[0][0]
         try:
             match_index = normalized_stock_codes.index(best_match)
-            if match_index < len(suppliers_list):
-                supplier = suppliers_list[match_index].strip()
-                most_common_source = supplier if supplier else man_sites_list[match_index]
+            supplier = suppliers_list[match_index].strip() if match_index < len(suppliers_list) else ""
+            most_common_source = supplier if supplier else man_sites_list[match_index]
         except Exception as e:
             print(f"⚠️ Match error for description '{description}': {e}")
 
@@ -106,20 +105,16 @@ for row in report_rows:
         most_common_source          # Source
     ]
 
-    # --- Append new row into table (extend table range) ---
-    table_range = table_out.range
-    next_row = table_range.last_cell.row + 1
+    # --- Append new row into table ---
+    next_row = table_out.range.last_cell.row + 1
     sheet_out.range(f"A{next_row}").value = new_row
 
     # Resize table to include new row
-    new_last_cell = sheet_out.range(f"A{next_row}").end('right')
-    new_table_range = sheet_out.range(
-        table_range.address.split(':')[0] + ':' + new_last_cell.address
-    )
-    table_out.resize(new_table_range)
+    table_out.resize(table_out.range.expand('table'))
 
-    print(f"✅ Added new row for Case Number {case_number} with Source '{most_common_source}'")
+    existing_cases.add(case_number)
     new_rows_added += 1
+    print(f"✅ Added new row for Case Number {case_number} with Source '{most_common_source}'")
 
 # --- Summary ---
 if new_rows_added == 0:

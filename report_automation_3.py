@@ -67,7 +67,7 @@ for row in report_rows:
     cells = row.get('dataCells', [])
     case_number = str(cells[3].get('label', '')).strip()
 
-    # Skip if already in table
+    # Skip if already in table — print nothing
     if case_number in existing_cases:
         continue
 

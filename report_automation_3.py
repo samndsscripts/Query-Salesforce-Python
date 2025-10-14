@@ -73,10 +73,10 @@ for row in report_rows:
         print(f"⚠️ Skipping row with invalid Case Number: {cells[3].get('label', '')}")
         continue
 
-    # Skip if already in table
+    # --- Check if already exists ---
     if case_number in existing_cases:
         print(f"Row not added — Case Number {case_number} already in table")
-        continue
+        continue  # skip to next row
 
     description = str(cells[4].get('label', ''))
 
@@ -112,6 +112,7 @@ for row in report_rows:
         most_common_source          # Source
     ]
 
+    # --- Queue for addition ---
     new_rows_to_add.append(new_row)
     existing_cases.add(case_number)
     print(f"Row added — Case Number {case_number}")
@@ -120,7 +121,6 @@ for row in report_rows:
 if new_rows_to_add:
     first_empty_row = table_out.range.last_cell.row + 1
     sheet_out.range(f"A{first_empty_row}").value = new_rows_to_add
-    # Resize table once
     table_out.resize(table_out.range.expand('table'))
 
 # --- Summary ---

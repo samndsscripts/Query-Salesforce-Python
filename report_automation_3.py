@@ -36,4 +36,92 @@ supplier_df = pd.DataFrame(table_range.value[1:], columns=table_range.value[0])
 
 # --- Clean and align lists ---
 supplier_df = supplier_df.dropna(subset=['Stock Code'])
-stock_codes_l
+stock_codes_list = supplier_df['Stock Code'].astype(str).tolist()
+man_sites_list   = supplier_df['Mfg Plant Name'].fillna("").astype(str).tolist()
+suppliers_list   = supplier_df['Supplier'].fillna("").astype(str).tolist()
+
+# --- Normalize helper ---
+def normalize(text):
+    text = str(text).lower()
+    text = re.sub(r"[^a-z0-9\s]", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+# --- Get reference to output table ---
+sheet_out = wb.sheets['test']
+table_out = sheet_out.tables['test']
+output_range = table_out.range
+output_df = pd.DataFrame(output_range.value[1:], columns=output_range.value[0])
+
+# Track existing case numbers as integers
+existing_cases = set(
+    output_df['Case Number'].dropna().apply(lambda x: int(float(x))).tolist()
+)
+
+# --- Process each Salesforce row ---
+new_rows_to_add = []
+rows_processed = 0
+
+for row in report_rows:
+    rows_processed += 1
+    cells = row.get('dataCells', [])
+
+    # Convert Salesforce Case Number to integer
+    try:
+        case_number = int(float(cells[3].get('label', 0)))
+    except:
+        print(f"⚠️ Skipping row with invalid Case Number: {cells[3].get('label', '')}")
+        continue
+
+    # Skip if already in table
+    if case_number in existing_cases:
+        print(f"Row not added — Case Number {case_number} already in table")
+        continue
+
+    description = str(cells[4].get('label', ''))
+
+    # --- Match to supplier/manufacturer ---
+    normalized_description = normalize(description)
+    normalized_stock_codes = [normalize(code) for code in stock_codes_list]
+    matches = process.extract(normalized_description, normalized_stock_codes, limit=1)
+
+    most_common_source = "N/A"
+    if matches:
+        best_match = matches[0][0]
+        try:
+            match_index = normalized_stock_codes.index(best_match)
+            supplier = suppliers_list[match_index].strip() if match_index < len(suppliers_list) else ""
+            most_common_source = supplier if supplier else man_sites_list[match_index]
+        except Exception:
+            pass
+
+    # --- Prepare new row ---
+    new_row = [
+        cells[0].get('label', ''),  # Opened Date
+        cells[1].get('label', ''),  # Case Reason
+        cells[2].get('label', ''),  # Case Owner
+        case_number,                # Case Number (int)
+        description,                # Description
+        '',                         # Quantity
+        cells[5].get('label', ''),  # RMA Value
+        cells[6].get('label', ''),  # Case Category
+        cells[7].get('label', ''),  # Account Name
+        '',                         # Comments
+        cells[8].get('label', ''),  # Contact Type
+        cells[9].get('label', ''),  # Shipping Whse
+        most_common_source          # Source
+    ]
+
+    new_rows_to_add.append(new_row)
+    existing_cases.add(case_number)
+    print(f"Row added — Case Number {case_number}")
+
+# --- Append all new rows at once ---
+if new_rows_to_add:
+    first_empty_row = table_out.range.last_cell.row + 1
+    sheet_out.range(f"A{first_empty_row}").value = new_rows_to_add
+    # Resize table once
+    table_out.resize(table_out.range.expand('table'))
+
+# --- Summary ---
+print(f"\n✅ Finished processing. Total rows processed: {rows_processed}, New rows added: {len(new_rows_to_add)}")

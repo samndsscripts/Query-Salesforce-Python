@@ -20,7 +20,6 @@ sf = Salesforce(
 
 # --- Fetch Salesforce report ---
 report_id = "00OUI00000EsGR72AN"
-
 try:
     report_data = sf.restful(f'analytics/reports/{report_id}', params={'includeDetails': 'true'})
 except Exception as e:
@@ -60,7 +59,7 @@ existing_cases = set(
 )
 
 # --- Process each Salesforce row ---
-new_rows_added = 0
+new_rows_to_add = []
 rows_processed = 0
 
 for row in report_rows:
@@ -71,7 +70,8 @@ for row in report_rows:
     try:
         case_number = int(float(cells[3].get('label', 0)))
     except:
-        continue  # skip rows with invalid case numbers
+        print(f"⚠️ Skipping row with invalid Case Number: {cells[3].get('label', '')}")
+        continue
 
     # Skip if already in table
     if case_number in existing_cases:
@@ -95,7 +95,7 @@ for row in report_rows:
         except Exception:
             pass
 
-    # --- Create new row ---
+    # --- Prepare new row ---
     new_row = [
         cells[0].get('label', ''),  # Opened Date
         cells[1].get('label', ''),  # Case Reason
@@ -112,14 +112,16 @@ for row in report_rows:
         most_common_source          # Source
     ]
 
-    # --- Append new row into table ---
-    next_row = table_out.range.last_cell.row + 1
-    sheet_out.range(f"A{next_row}").value = new_row
-    table_out.resize(table_out.range.expand('table'))
-
+    new_rows_to_add.append(new_row)
     existing_cases.add(case_number)
-    new_rows_added += 1
     print(f"Row added — Case Number {case_number}")
 
+# --- Append all new rows at once ---
+if new_rows_to_add:
+    first_empty_row = table_out.range.last_cell.row + 1
+    sheet_out.range(f"A{first_empty_row}").value = new_rows_to_add
+    # Resize table once
+    table_out.resize(table_out.range.expand('table'))
+
 # --- Summary ---
-print(f"\n✅ Finished processing. Total rows processed: {rows_processed}, New rows added: {new_rows_added}")
+print(f"\n✅ Finished processing. Total rows processed: {rows_processed}, New rows added: {len(new_rows_to_add)}")

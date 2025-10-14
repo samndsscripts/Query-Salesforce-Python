@@ -67,13 +67,13 @@ for row in report_rows:
         continue
     case_number = int(case_number_str)
 
-    # Skip if already in table
+    # --- EARLY SKIP: If already exists, do NOT continue ---
     if case_number in existing_cases:
-        continue
+        continue  # skip fuzzy matching and row prep entirely
 
     description = str(cells[4].get('label', ''))
 
-    # --- Match to supplier/manufacturer ---
+    # --- Match to supplier/manufacturer (only for new rows) ---
     normalized_description = normalize(description)
     normalized_stock_codes = [normalize(code) for code in stock_codes_list]
     matches = process.extract(normalized_description, normalized_stock_codes, limit=1)

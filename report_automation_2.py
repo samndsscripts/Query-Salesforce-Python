@@ -96,10 +96,17 @@ for row in report_rows:
         cells[9].get('label', ''),  # Shipping Whse
         most_common_source          # Source
     ]
+  # --- Append new row into table (extend table range) ---
+    table_range = table_out.range
+    next_row = table_range.last_cell.row + 1
 
-    # --- Append new row to Excel table ---
-    next_row = output_range.last_cell.row + 1
+    # Write new row values
     sheet_out.range(f"A{next_row}").value = new_row
+
+    # Resize table to include new row
+    new_last_cell = sheet_out.range(f"A{next_row}").end('right')
+    new_table_range = sheet_out.range(table_range.address.split(':')[0] + ':' + new_last_cell.address)
+    table_out.resize(new_table_range)w
 
     print(f"✅ Added row for Case Number {cells[3].get('label', '')} with Source '{most_common_source}'")
 

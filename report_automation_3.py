@@ -25,7 +25,7 @@ try:
 except Exception as e:
     print("❌ Error fetching report:", e)
 
-# Limit for testing — process first 5 rows
+# --- Limit for testing — first 5 rows ---
 report_rows = report_data.get('factMap', {}).get('T!T', {}).get('rows', [])[:5]
 
 # --- Load supplier table from Excel ---
@@ -91,37 +91,4 @@ for row in report_rows:
         try:
             match_index = normalized_stock_codes.index(best_match)
             supplier = suppliers_list[match_index].strip() if match_index < len(suppliers_list) else ""
-            most_common_source = supplier if supplier else man_sites_list[match_index]
-        except Exception:
-            pass
-
-    # --- Prepare new row ---
-    new_row = [
-        cells[0].get('label', ''),  # Opened Date
-        cells[1].get('label', ''),  # Case Reason
-        cells[2].get('label', ''),  # Case Owner
-        case_number,                # Case Number (int)
-        description,                # Description
-        '',                         # Quantity
-        cells[5].get('label', ''),  # RMA Value
-        cells[6].get('label', ''),  # Case Category
-        cells[7].get('label', ''),  # Account Name
-        '',                         # Comments
-        cells[8].get('label', ''),  # Contact Type
-        cells[9].get('label', ''),  # Shipping Whse
-        most_common_source          # Source
-    ]
-
-    new_rows_to_add.append(new_row)
-    existing_cases.add(case_number)
-    print(f"Row added — Case Number {case_number}")
-
-# --- Append all new rows at once ---
-if new_rows_to_add:
-    first_empty_row = table_out.range.last_cell.row + 1
-    sheet_out.range(f"A{first_empty_row}").value = new_rows_to_add
-    # Resize table once
-    table_out.resize(table_out.range.expand('table'))
-
-# --- Summary ---
-print(f"\n✅ Finished processing. Total rows processed: {rows_processed}, New rows added: {len(new_rows_to_add)}")
+            most_common_source = supplier if sup

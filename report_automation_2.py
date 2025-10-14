@@ -29,7 +29,8 @@ try:
 except Exception as e:
     print("❌ Error fetching report:", e)
 
-report_rows = report_data.get('factMap', {}).get('T!T', {}).get('rows', [])[:5]  # Limit to 5 rows for testing
+# Limit for testing — process first 5 rows
+report_rows = report_data.get('factMap', {}).get('T!T', {}).get('rows', [])[:5]
 
 # --- Load supplier table from Excel ---
 wb = xw.Book(r"C:\Users\emp35107\OneDrive - NORMA Group\Documents\PPMs.xlsx")
@@ -37,10 +38,11 @@ sheet_sup = wb.sheets['Class Site Supplier']
 table_range = sheet_sup.tables['Table3'].range
 supplier_df = pd.DataFrame(table_range.value[1:], columns=table_range.value[0])
 
-# Extract lists
-stock_codes_list = supplier_df['Stock Code'].dropna().astype(str).tolist()
-man_sites_list   = supplier_df['Mfg Plant Name'].dropna().astype(str).tolist()
-suppliers_list   = supplier_df['Supplier'].dropna().astype(str).tolist()
+# --- Clean and align lists ---
+supplier_df = supplier_df.dropna(subset=['Stock Code'])  # keep only rows with valid Stock Codes
+stock_codes_list = supplier_df['Stock Code'].astype(str).tolist()
+man_sites_list   = supplier_df['Mfg Plant Name'].fillna("").astype(str).tolist()
+suppliers_list   = supplier_df['Supplier'].fillna("").astype(str).tolist()
 
 # --- Normalize helper ---
 def normalize(text):
@@ -68,12 +70,15 @@ for row in report_rows:
     most_common_source = "N/A"
     if matches:
         best_match = matches[0][0]
-        match_index = normalized_stock_codes.index(best_match)
-        most_common_source = (
-            suppliers_list[match_index]
-            if suppliers_list[match_index].strip()
-            else man_sites_list[match_index]
-        )
+        try:
+            match_index = normalized_stock_codes.index(best_match)
+            if match_index < len(suppliers_list):
+                supplier = suppliers_list[match_index].strip()
+                most_common_source = supplier if supplier else man_sites_list[match_index]
+            else:
+                print(f"⚠️ Warning: Match index {match_index} out of range for lists.")
+        except Exception as e:
+            print(f"⚠️ Match error for description '{description}': {e}")
 
     # --- Create new row ---
     new_row = [

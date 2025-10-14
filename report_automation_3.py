@@ -125,4 +125,4 @@ for row in report_rows:
 if new_rows_added == 0:
     print("\n✅ Table is up to date — no new cases found.")
 else:
-    print(f"\n✅ Finished processing. Added {new
+    print(f"\n✅ Finished processing. Added {new_rows_added} new row(s).")

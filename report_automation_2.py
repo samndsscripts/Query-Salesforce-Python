@@ -96,7 +96,8 @@ for row in report_rows:
         cells[9].get('label', ''),  # Shipping Whse
         most_common_source          # Source
     ]
-  # --- Append new row into table (extend table range) ---
+
+    # --- Append new row into table (extend table range) ---
     table_range = table_out.range
     next_row = table_range.last_cell.row + 1
 
@@ -105,8 +106,10 @@ for row in report_rows:
 
     # Resize table to include new row
     new_last_cell = sheet_out.range(f"A{next_row}").end('right')
-    new_table_range = sheet_out.range(table_range.address.split(':')[0] + ':' + new_last_cell.address)
-    table_out.resize(new_table_range)w
+    new_table_range = sheet_out.range(
+        table_range.address.split(':')[0] + ':' + new_last_cell.address
+    )
+    table_out.resize(new_table_range)
 
     print(f"✅ Added row for Case Number {cells[3].get('label', '')} with Source '{most_common_source}'")
 

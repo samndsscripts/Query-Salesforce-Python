@@ -20,10 +20,7 @@ sf = Salesforce(
 
 # --- Fetch Salesforce report ---
 report_id = "00OUI00000EsGR72AN"
-try:
-    report_data = sf.restful(f'analytics/reports/{report_id}', params={'includeDetails': 'true'})
-except Exception as e:
-    print("❌ Error fetching report:", e)
+report_data = sf.restful(f'analytics/reports/{report_id}', params={'includeDetails': 'true'})
 
 # --- Limit for testing — first 5 rows ---
 report_rows = report_data.get('factMap', {}).get('T!T', {}).get('rows', [])[:5]
@@ -60,23 +57,19 @@ existing_cases = set(
 
 # --- Process each Salesforce row ---
 new_rows_to_add = []
-rows_processed = 0
 
 for row in report_rows:
-    rows_processed += 1
     cells = row.get('dataCells', [])
 
     # Convert Salesforce Case Number to integer
     try:
         case_number = int(float(cells[3].get('label', 0)))
     except:
-        print(f"⚠️ Skipping row with invalid Case Number: {cells[3].get('label', '')}")
         continue
 
-    # --- Check if already exists ---
+    # Skip if already in table
     if case_number in existing_cases:
-        print(f"Row not added — Case Number {case_number} already in table")
-        continue  # skip to next row
+        continue
 
     description = str(cells[4].get('label', ''))
 
@@ -112,10 +105,8 @@ for row in report_rows:
         most_common_source          # Source
     ]
 
-    # --- Queue for addition ---
     new_rows_to_add.append(new_row)
     existing_cases.add(case_number)
-    print(f"Row added — Case Number {case_number}")
 
 # --- Append all new rows at once ---
 if new_rows_to_add:
@@ -123,5 +114,9 @@ if new_rows_to_add:
     sheet_out.range(f"A{first_empty_row}").value = new_rows_to_add
     table_out.resize(table_out.range.expand('table'))
 
-# --- Summary ---
-print(f"\n✅ Finished processing. Total rows processed: {rows_processed}, New rows added: {len(new_rows_to_add)}")
+# --- Output arrays for inspection ---
+rows_added_array = new_rows_to_add
+existing_cases_array = list(existing_cases)
+
+print("New rows to add (rows_added_array):", rows_added_array)
+print("All case numbers including existing (existing_cases_array):", existing_cases_array)

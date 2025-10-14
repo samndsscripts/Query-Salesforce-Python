@@ -54,8 +54,10 @@ table_out = sheet_out.tables['test']
 output_range = table_out.range
 output_df = pd.DataFrame(output_range.value[1:], columns=output_range.value[0])
 
-# Track existing case numbers
-existing_cases = set(output_df['Case Number'].dropna().astype(str).str.strip().tolist())
+# Track existing case numbers as integers
+existing_cases = set(
+    output_df['Case Number'].dropna().apply(lambda x: int(float(x))).tolist()
+)
 
 # --- Process each Salesforce row ---
 new_rows_added = 0
@@ -64,7 +66,12 @@ rows_processed = 0
 for row in report_rows:
     rows_processed += 1
     cells = row.get('dataCells', [])
-    case_number = str(cells[3].get('label', '')).strip()
+
+    # Convert Salesforce Case Number to integer
+    try:
+        case_number = int(float(cells[3].get('label', 0)))
+    except:
+        continue  # skip rows with invalid case numbers
 
     # Skip if already in table
     if case_number in existing_cases:
@@ -85,7 +92,7 @@ for row in report_rows:
             match_index = normalized_stock_codes.index(best_match)
             supplier = suppliers_list[match_index].strip() if match_index < len(suppliers_list) else ""
             most_common_source = supplier if supplier else man_sites_list[match_index]
-        except Exception as e:
+        except Exception:
             pass
 
     # --- Create new row ---
@@ -93,7 +100,7 @@ for row in report_rows:
         cells[0].get('label', ''),  # Opened Date
         cells[1].get('label', ''),  # Case Reason
         cells[2].get('label', ''),  # Case Owner
-        case_number,                # Case Number
+        case_number,                # Case Number (int)
         description,                # Description
         '',                         # Quantity
         cells[5].get('label', ''),  # RMA Value

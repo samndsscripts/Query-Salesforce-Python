@@ -66,7 +66,8 @@ def parse_quantity_from_title(title):
 
     return ''  # no quantity found
 
-# --- Main loop (Version 6) ---
+
+# --- Main loop (Version 6.1) ---
 try:
     while True:
         os.system('cls' if os.name == 'nt' else 'clear')  # clear console each cycle
@@ -93,13 +94,21 @@ try:
             if case_number is None or case_number in existing_cases:
                 continue  # skip duplicates or invalid
 
-            description = str(cells[4].get('label', ''))
+            # --- Get Case Title (Subject) via SOQL ---
+            soql = f"SELECT Id, CaseNumber, Subject FROM Case WHERE CaseNumber = '{case_number}'"
+            result = sf.query(soql)
+            records = result.get('records', [])
+            case_title = ""
+            if records:
+                case_title = records[0].get('Subject', '')
+            else:
+                case_title = cells[4].get('label', '')  # fallback if missing
 
-            # --- Extract quantity from description ---
-            quantity_value = parse_quantity_from_title(description)
+            # --- Extract quantity from title ---
+            quantity_value = parse_quantity_from_title(case_title)
 
             # --- Match to supplier/manufacturer ---
-            normalized_description = normalize(description)
+            normalized_description = normalize(case_title)
             normalized_stock_codes = [normalize(code) for code in stock_codes_list]
             matches = process.extract(normalized_description, normalized_stock_codes, limit=1)
 
@@ -119,7 +128,7 @@ try:
                 cells[1].get('label', ''),  # Case Reason
                 cells[2].get('label', ''),  # Case Owner
                 case_number,                # Case Number
-                description,                # Description
+                case_title,                 # Case Title
                 quantity_value,             # Quantity (parsed)
                 cells[5].get('label', ''),  # RMA Value
                 cells[6].get('label', ''),  # Case Category
@@ -152,8 +161,7 @@ try:
                 print(f"Case {row[3]} | Qty: {row[5]} | {row[4]}")
 
         # --- Sleep before next cycle ---
-        time.sleep(60)  # adjust cycle interval as needed
+        time.sleep(60)
 
 except KeyboardInterrupt:
     print("\nScript stopped by user.")
-

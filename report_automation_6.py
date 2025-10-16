@@ -1,15 +1,20 @@
+# version6_continuous.py
 import time
-import csv
-from simple_salesforce import Salesforce
-import json
-from tabulate import tabulate
+import re
+import os
+from math import ceil
+from collections import defaultdict
+
 import pandas as pd
 import xlwings as xw
-import re
+from simple_salesforce import Salesforce
 from rapidfuzz import process
-import os  # for clearing the screen
+from colorama import init as colorama_init, Fore, Style
 
-# ----- Salesforce login -----
+# initialize colorama for colored terminal output
+colorama_init(autoreset=True)
+
+# ----- Salesforce login (use your credentials) -----
 sf = Salesforce(
     username='samuelcooper@ndspro.com',
     password='Summer@NDS2025',
@@ -17,142 +22,262 @@ sf = Salesforce(
     instance_url='https://nds.my.salesforce.com'
 )
 
-# --- Load supplier table from Excel ---
-wb = xw.Book(r"C:\Users\emp35107\OneDrive - NORMA Group\Documents\PPMs.xlsx")
-sheet_sup = wb.sheets['Class Site Supplier']
-table_range = sheet_sup.tables['Table3'].range
+# ----- Excel workbook / supplier table setup -----
+WB_PATH = r"C:\Users\emp35107\OneDrive - NORMA Group\Documents\PPMs.xlsx"
+SUPPLIER_SHEET = 'Class Site Supplier'
+SUPPLIER_TABLE = 'Table3'
+OUTPUT_SHEET = 'test'
+OUTPUT_TABLE = 'test'
+
+wb = xw.Book(WB_PATH)
+sheet_sup = wb.sheets[SUPPLIER_SHEET]
+table_range = sheet_sup.tables[SUPPLIER_TABLE].range
 supplier_df = pd.DataFrame(table_range.value[1:], columns=table_range.value[0])
 
-# --- Clean and align lists ---
-supplier_df = supplier_df.dropna(subset=['Stock Code'])
+# ensure supplier_df aligned
+supplier_df = supplier_df.fillna('')
+
 stock_codes_list = supplier_df['Stock Code'].astype(str).tolist()
-man_sites_list   = supplier_df['Mfg Plant Name'].fillna("").astype(str).tolist()
-suppliers_list   = supplier_df['Supplier'].fillna("").astype(str).tolist()
+man_sites_list = supplier_df['Mfg Plant Name'].astype(str).tolist()
+suppliers_list = supplier_df['Supplier'].astype(str).tolist()
 
-# --- Normalize helper ---
-def normalize(text):
-    text = str(text).lower()
-    text = re.sub(r"[^a-z0-9\s]", " ", text)
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
+# --- Helpers ---
+def normalize(text: str) -> str:
+    t = str(text or "").lower()
+    t = re.sub(r"[^a-z0-9\s]", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
 
-# --- Robust case number parser ---
+# robust parse for case numbers (works with "141331.00" or "00141331")
 def parse_case_number(x):
     try:
-        return int(float(str(x).strip()))
-    except:
+        xs = str(x).strip()
+        if xs == "":
+            return None
+        # remove non-digits just in case, but keep digits only
+        digits = re.findall(r"\d+", xs)
+        if not digits:
+            return None
+        # join if multiple groups (shouldn't be) and convert
+        return int("".join(digits))
+    except Exception:
         return None
 
-# --- Quantity parser ---
-def parse_quantity_from_title(title):
-    """
-    Extracts an integer quantity based on 'qty' or 'pcs' patterns.
-    Rules:
-      - If 'qty' is found → number comes AFTER it.
-      - If 'pcs' is found → number comes BEFORE it.
-    Returns '' if unparsable.
-    """
+# extract and sum all qty/pcs mentions from a title
+def extract_total_quantity(title: str):
+    if not title:
+        return None
     text = str(title).lower()
+    # find all qty N patterns and all "N pcs" patterns
+    qty_after_matches = re.findall(r'qty\s*[:\-]?\s*(\d+)', text)
+    pcs_before_matches = re.findall(r'(\d+)\s*pcs?', text)
+    total = 0
+    for m in qty_after_matches:
+        try:
+            total += int(m)
+        except:
+            pass
+    for m in pcs_before_matches:
+        try:
+            total += int(m)
+        except:
+            pass
+    return int(total) if total > 0 else None
 
-    # QTY pattern (number after)
-    qty_match = re.search(r'qty\s*(\d+)', text)
-    if qty_match:
-        return int(qty_match.group(1))
+# batch a list into chunks of size n
+def chunks(lst, n):
+    for i in range(0, len(lst), n):
+        yield lst[i:i+n]
 
-    # PCS pattern (number before)
-    pcs_match = re.search(r'(\d+)\s*pcs', text)
-    if pcs_match:
-        return int(pcs_match.group(1))
+# Find Source via fuzzy match (single best match)
+# NOTE: normalized_stock_codes cached per cycle
+def determine_source(description, normalized_stock_codes):
+    nd = normalize(description)
+    if not nd or not normalized_stock_codes:
+        return "N/A"
+    match = process.extractOne(nd, normalized_stock_codes)
+    if not match:
+        return "N/A"
+    best_norm_code = match[0]
+    try:
+        idx = normalized_stock_codes.index(best_norm_code)
+        supplier = suppliers_list[idx].strip()
+        if supplier:
+            return supplier
+        else:
+            return man_sites_list[idx] if idx < len(man_sites_list) else "N/A"
+    except Exception:
+        return "N/A"
 
-    return ''  # no quantity found
+# --- Main continuous loop (Version 6) ---
+REPORT_ID = "00OUI00000EsGR72AN"
+CYCLE_SECONDS = 60
+SOQL_BATCH = 100  # number of case numbers per SOQL IN() (safe)
 
-# --- Main loop (Version 6) ---
 try:
     while True:
-        os.system('cls' if os.name == 'nt' else 'clear')  # clear console each cycle
+        # clear console
+        os.system('cls' if os.name == 'nt' else 'clear')
 
-        # --- Get reference to output table ---
-        sheet_out = wb.sheets['test']
-        table_out = sheet_out.tables['test']
-        output_df = pd.DataFrame(table_out.range.value[1:], columns=table_out.range.value[0])
+        # get reference to output table
+        sheet_out = wb.sheets[OUTPUT_SHEET]
+        table_out = sheet_out.tables[OUTPUT_TABLE]
 
-        # --- Track existing case numbers ---
-        parsed_cases = output_df['Case Number'].apply(parse_case_number).tolist()
-        existing_cases = set(filter(None, parsed_cases))
+        # read current table data (handle empty table gracefully)
+        try:
+            table_vals = table_out.range.value or []
+            if len(table_vals) >= 1:
+                output_df = pd.DataFrame(table_vals[1:], columns=table_vals[0])
+            else:
+                output_df = pd.DataFrame(columns=table_vals[0] if table_vals else [])
+        except Exception:
+            # fallback if something odd happens
+            output_df = pd.DataFrame()
 
-        # --- Fetch Salesforce report ---
-        report_id = "00OUI00000EsGR72AN"
-        report_data = sf.restful(f'analytics/reports/{report_id}', params={'includeDetails': 'true'})
-        report_rows = report_data.get('factMap', {}).get('T!T', {}).get('rows', [])
+        # build set of existing case numbers (integers)
+        if 'Case Number' in output_df.columns:
+            parsed_cases = output_df['Case Number'].apply(parse_case_number).tolist()
+            existing_cases = set(filter(None, parsed_cases))
+        else:
+            existing_cases = set()
 
-        # --- Process each Salesforce row ---
-        new_rows_to_add = []
+        # fetch report rows
+        try:
+            report_data = sf.restful(f'analytics/reports/{REPORT_ID}', params={'includeDetails': 'true'})
+            report_rows = report_data.get('factMap', {}).get('T!T', {}).get('rows', []) or []
+        except Exception as e:
+            print(Fore.RED + "❌ Error fetching report:", str(e))
+            time.sleep(CYCLE_SECONDS)
+            continue
+
+        # collect unique new case numbers (strings), keeping order
+        new_case_numbers = []
+        seen_cn = set()
         for row in report_rows:
             cells = row.get('dataCells', [])
-            case_number = parse_case_number(cells[3].get('label', ''))
-            if case_number is None or case_number in existing_cases:
-                continue  # skip duplicates or invalid
+            if len(cells) <= 3:
+                continue
+            raw_cn = str(cells[3].get('label', '')).strip()
+            if not raw_cn:
+                continue
+            cn_int = parse_case_number(raw_cn)
+            if cn_int is None or cn_int in existing_cases:
+                continue
+            if raw_cn not in seen_cn:
+                seen_cn.add(raw_cn)
+                new_case_numbers.append(raw_cn)
 
-            description = str(cells[4].get('label', ''))
+        # quick status
+        print(f"Cycle start: Found {len(new_case_numbers)} new case(s) not in Excel table.")
 
-            # --- Extract quantity from description ---
-            quantity_value = parse_quantity_from_title(description)
+        # if none, show summary and sleep
+        if not new_case_numbers:
+            print("\nNo new cases this cycle.")
+            print(f"Waiting {CYCLE_SECONDS}s before next cycle...")
+            time.sleep(CYCLE_SECONDS)
+            continue
 
-            # --- Match to supplier/manufacturer ---
-            normalized_description = normalize(description)
-            normalized_stock_codes = [normalize(code) for code in stock_codes_list]
-            matches = process.extract(normalized_description, normalized_stock_codes, limit=1)
+        # Batch SOQL queries to get Case.Subject for the new cases
+        # We'll build mapping caseNumber -> subject
+        case_subject_map = {}
+        for batch in chunks(new_case_numbers, SOQL_BATCH):
+            # escape/sanitize case numbers and join
+            quoted = ",".join(f"'{cn}'" for cn in batch)
+            soql = f"SELECT CaseNumber, Subject FROM Case WHERE CaseNumber IN ({quoted})"
+            try:
+                res = sf.query_all(soql)
+                recs = res.get('records', []) if res else []
+                for r in recs:
+                    case_subject_map.get(r['CaseNumber'])  # ensure presence
+                    case_subject_map[r['CaseNumber']] = r.get('Subject') or ''
+            except Exception as e:
+                print(Fore.RED + "SOQL error:", str(e))
 
-            most_common_source = "N/A"
-            if matches:
-                best_match = matches[0][0]
-                try:
-                    match_index = normalized_stock_codes.index(best_match)
-                    supplier = suppliers_list[match_index].strip() if match_index < len(suppliers_list) else ""
-                    most_common_source = supplier if supplier else man_sites_list[match_index]
-                except Exception:
-                    pass
+        # prepare normalized stock codes once for this cycle
+        normalized_stock_codes = [normalize(c) for c in stock_codes_list]
 
-            # --- Prepare new row ---
+        # build new rows to append
+        new_rows_to_add = []
+        printed_rows = []  # for printing after all prep
+        for raw_cn in new_case_numbers:
+            cn_int = parse_case_number(raw_cn)
+            # if still None or somehow added in the meantime, skip
+            if cn_int is None or cn_int in existing_cases:
+                continue
+
+            # find the matching report row to get other fields (Opened Date etc.)
+            # We'll search report_rows for the one with this case number string
+            report_row = None
+            for r in report_rows:
+                cells = r.get('dataCells', [])
+                if len(cells) > 3 and str(cells[3].get('label', '')).strip() == raw_cn:
+                    report_row = r
+                    break
+            if report_row is None:
+                # fallback skip
+                continue
+
+            cells = report_row.get('dataCells', [])
+            description = str(cells[4].get('label', '') or "")
+            # get subject (case title) from map (may be '' if not found)
+            subject = case_subject_map.get(raw_cn, "")
+
+            # parse quantity from subject (supports multiple mentions)
+            qty_val = None
+            if subject:
+                qty_val = extract_total_quantity(subject)
+
+            # determine source by fuzzy match on description
+            source = determine_source(description, normalized_stock_codes)
+
+            # prepare new row using same column order you used earlier
             new_row = [
-                cells[0].get('label', ''),           # Opened Date
-                cells[1].get('label', ''),           # Case Reason
-                cells[2].get('label', ''),           # Case Owner
-                case_number,                         # Case Number
-                description,                         # Description
-                quantity_value,                      # Quantity (parsed)
-                cells[5].get('label', ''),           # RMA Value
-                cells[6].get('label', ''),           # Case Category
-                cells[7].get('label', ''),           # Account Name
-                '',                                  # Comments
-                cells[8].get('label', ''),           # Contact Type
-                cells[9].get('label', ''),           # Shipping Whse
-                most_common_source                   # Source
+                cells[0].get('label', ''),  # Opened Date
+                cells[1].get('label', ''),  # Case Reason
+                cells[2].get('label', ''),  # Case Owner
+                cn_int,                     # Case Number (int)
+                description,                # Description
+                qty_val if qty_val is not None else '',  # Quantity
+                cells[5].get('label', ''),  # RMA Value
+                cells[6].get('label', ''),  # Case Category
+                cells[7].get('label', ''),  # Account Name
+                '',                         # Comments
+                cells[8].get('label', ''),  # Contact Type
+                cells[9].get('label', ''),  # Shipping Whse
+                source                      # Source
             ]
 
             new_rows_to_add.append(new_row)
-            existing_cases.add(case_number)
+            existing_cases.add(cn_int)
+            printed_rows.append((cn_int, qty_val, subject))
 
-        # --- Append new rows using working method ---
+        # Append new rows into the table (write below current table and resize)
         if new_rows_to_add:
             current_table_rows = table_out.range.rows.count
             current_table_cols = table_out.range.columns.count
             start_row = table_out.range.row + current_table_rows
+            # write
             sheet_out.range((start_row, table_out.range.column)).value = new_rows_to_add
-            table_out.resize(sheet_out.range(
-                (table_out.range.row, table_out.range.column),
-                (table_out.range.row + current_table_rows + len(new_rows_to_add) - 1,
-                 table_out.range.column + current_table_cols - 1)
-            ))
+            # compute new resize range
+            new_end_row = table_out.range.row + current_table_rows + len(new_rows_to_add) - 1
+            new_end_col = table_out.range.column + current_table_cols - 1
+            table_out.resize(sheet_out.range((table_out.range.row, table_out.range.column),
+                                             (new_end_row, new_end_col)))
 
-        # --- Print new rows added this cycle ---
-        print(f"Cycle complete. New rows added: {len(new_rows_to_add)}")
-        if new_rows_to_add:
-            for row in new_rows_to_add:
-                print(f"Case {row[3]} | Qty: {row[5]} | {row[4]}")
+        # Print results for this cycle (colored)
+        print()
+        if printed_rows:
+            for cn_int, qty_val, subject in printed_rows:
+                if qty_val is not None:
+                    print(Fore.GREEN + f"New → Case {cn_int} | Qty: {qty_val} | {subject}")
+                else:
+                    print(Fore.YELLOW + f"New → Case {cn_int} | Qty: N/A | {subject}")
+        else:
+            print("No rows were actually prepared to add (race condition or subject fetch missing).")
 
-        # --- Sleep before next cycle ---
-        time.sleep(60)  # adjust cycle interval as needed
+        print(f"\nCycle complete. New rows added this cycle: {len(new_rows_to_add)}")
+        print(f"Waiting {CYCLE_SECONDS}s before next cycle...")
+        time.sleep(CYCLE_SECONDS)
 
 except KeyboardInterrupt:
-    print("\nScript stopped by user.")
+    print("\n" + Style.BRIGHT + "Script stopped by user.")

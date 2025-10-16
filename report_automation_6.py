@@ -1,8 +1,7 @@
-# version6_continuous.py
+# version6_continuous_fixed.py
 import time
 import re
 import os
-from math import ceil
 from collections import defaultdict
 
 import pandas as pd
@@ -54,11 +53,9 @@ def parse_case_number(x):
         xs = str(x).strip()
         if xs == "":
             return None
-        # remove non-digits just in case, but keep digits only
         digits = re.findall(r"\d+", xs)
         if not digits:
             return None
-        # join if multiple groups (shouldn't be) and convert
         return int("".join(digits))
     except Exception:
         return None
@@ -68,7 +65,6 @@ def extract_total_quantity(title: str):
     if not title:
         return None
     text = str(title).lower()
-    # find all qty N patterns and all "N pcs" patterns
     qty_after_matches = re.findall(r'qty\s*[:\-]?\s*(\d+)', text)
     pcs_before_matches = re.findall(r'(\d+)\s*pcs?', text)
     total = 0
@@ -90,7 +86,6 @@ def chunks(lst, n):
         yield lst[i:i+n]
 
 # Find Source via fuzzy match (single best match)
-# NOTE: normalized_stock_codes cached per cycle
 def determine_source(description, normalized_stock_codes):
     nd = normalize(description)
     if not nd or not normalized_stock_codes:
@@ -119,19 +114,20 @@ try:
         # clear console
         os.system('cls' if os.name == 'nt' else 'clear')
 
-        # get reference to output table
+        # get reference to output table and sheet
         sheet_out = wb.sheets[OUTPUT_SHEET]
         table_out = sheet_out.tables[OUTPUT_TABLE]
 
         # read current table data (handle empty table gracefully)
         try:
             table_vals = table_out.range.value or []
-            if len(table_vals) >= 1:
+            if isinstance(table_vals, list) and len(table_vals) >= 1:
                 output_df = pd.DataFrame(table_vals[1:], columns=table_vals[0])
             else:
-                output_df = pd.DataFrame(columns=table_vals[0] if table_vals else [])
+                # header-only table or weird shape -> empty df with expected columns if available
+                cols = table_vals[0] if isinstance(table_vals, list) and table_vals else []
+                output_df = pd.DataFrame(columns=cols)
         except Exception:
-            # fallback if something odd happens
             output_df = pd.DataFrame()
 
         # build set of existing case numbers (integers)
@@ -178,17 +174,14 @@ try:
             continue
 
         # Batch SOQL queries to get Case.Subject for the new cases
-        # We'll build mapping caseNumber -> subject
         case_subject_map = {}
         for batch in chunks(new_case_numbers, SOQL_BATCH):
-            # escape/sanitize case numbers and join
             quoted = ",".join(f"'{cn}'" for cn in batch)
             soql = f"SELECT CaseNumber, Subject FROM Case WHERE CaseNumber IN ({quoted})"
             try:
                 res = sf.query_all(soql)
                 recs = res.get('records', []) if res else []
                 for r in recs:
-                    case_subject_map.get(r['CaseNumber'])  # ensure presence
                     case_subject_map[r['CaseNumber']] = r.get('Subject') or ''
             except Exception as e:
                 print(Fore.RED + "SOQL error:", str(e))
@@ -201,12 +194,10 @@ try:
         printed_rows = []  # for printing after all prep
         for raw_cn in new_case_numbers:
             cn_int = parse_case_number(raw_cn)
-            # if still None or somehow added in the meantime, skip
             if cn_int is None or cn_int in existing_cases:
                 continue
 
             # find the matching report row to get other fields (Opened Date etc.)
-            # We'll search report_rows for the one with this case number string
             report_row = None
             for r in report_rows:
                 cells = r.get('dataCells', [])
@@ -214,12 +205,10 @@ try:
                     report_row = r
                     break
             if report_row is None:
-                # fallback skip
                 continue
 
             cells = report_row.get('dataCells', [])
             description = str(cells[4].get('label', '') or "")
-            # get subject (case title) from map (may be '' if not found)
             subject = case_subject_map.get(raw_cn, "")
 
             # parse quantity from subject (supports multiple mentions)
@@ -251,18 +240,22 @@ try:
             existing_cases.add(cn_int)
             printed_rows.append((cn_int, qty_val, subject))
 
-        # Append new rows into the table (write below current table and resize)
+        # Append new rows into the table: write below current table and rely on Excel auto-expand
         if new_rows_to_add:
             current_table_rows = table_out.range.rows.count
             current_table_cols = table_out.range.columns.count
             start_row = table_out.range.row + current_table_rows
-            # write
+            # write new rows immediately below table
             sheet_out.range((start_row, table_out.range.column)).value = new_rows_to_add
-            # compute new resize range
-            new_end_row = table_out.range.row + current_table_rows + len(new_rows_to_add) - 1
-            new_end_col = table_out.range.column + current_table_cols - 1
-            table_out.resize(sheet_out.range((table_out.range.row, table_out.range.column),
-                                             (new_end_row, new_end_col)))
+
+            # Refresh the table object reference and print new count for confirmation
+            try:
+                # Re-fetch table object (some Excel states require re-binding)
+                table_out = sheet_out.tables[OUTPUT_TABLE]
+                new_count = table_out.range.rows.count
+                print(Fore.CYAN + f"\nTable now has {new_count} rows (including header).")
+            except Exception:
+                print(Fore.YELLOW + "Unable to refresh table object; please check Excel.")
 
         # Print results for this cycle (colored)
         print()

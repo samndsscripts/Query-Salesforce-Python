@@ -170,11 +170,17 @@ try:
             new_rows_to_add.append(new_row)
             existing_cases.add(cn_int)
 
-        # --- Append into the Excel Table properly ---
+        # --- Append to Excel Table properly ---
         if new_rows_to_add:
-            # Expand the table range
-            table_out.range.end('down').offset(1, 0).value = new_rows_to_add
-            print(f"\n✅ Added {len(new_rows_to_add)} new row(s) into the table.\n")
+            # Determine first empty row in the table body
+            header_rows = 1
+            table_body_rows = len(table_out.range.value) - header_rows
+            start_row = table_out.range.row + header_rows + table_body_rows
+            start_col = table_out.range.column
+
+            sheet_out.range((start_row, start_col)).value = new_rows_to_add
+
+            print(f"\n✅ Added {len(new_rows_to_add)} new row(s) to Excel Table.\n")
             for nr in new_rows_to_add:
                 print(f" → Case {nr[3]} | Qty: {nr[5] or 'N/A'} | Source: {nr[-1]}")
         else:

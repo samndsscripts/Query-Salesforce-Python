@@ -122,15 +122,26 @@ try:
             time.sleep(CYCLE_SECONDS)
             continue
 
-        # --- Batch SOQL: get titles ---
+        # --- Batch SOQL: get titles and comments ---
         case_subject_map = {}
+        case_comments_map = {}
+
         for batch in [new_case_numbers[i:i+SOQL_BATCH] for i in range(0, len(new_case_numbers), SOQL_BATCH)]:
             quoted = ",".join(f"'{cn}'" for cn in batch)
-            soql = f"SELECT CaseNumber, Subject FROM Case WHERE CaseNumber IN ({quoted})"
+            soql = f"""
+                SELECT CaseNumber, Subject, 
+                (SELECT CommentBody FROM CaseComments ORDER BY CreatedDate DESC LIMIT 1)
+                FROM Case 
+                WHERE CaseNumber IN ({quoted})
+            """
             try:
                 result = sf.query_all(soql)
                 for rec in result.get('records', []):
-                    case_subject_map[rec['CaseNumber']] = rec.get('Subject', '')
+                    case_number = rec.get('CaseNumber', '')
+                    case_subject_map[case_number] = rec.get('Subject', '')
+                    comments = rec.get('CaseComments', {}).get('records', [])
+                    latest_comment = comments[0]['CommentBody'] if comments else ''
+                    case_comments_map[case_number] = latest_comment
             except Exception as e:
                 print("⚠️ SOQL batch failed:", e)
 
@@ -149,6 +160,7 @@ try:
 
             description = str(cells[4].get('label', ''))
             subject = case_subject_map.get(cn_raw, '')
+            comment = case_comments_map.get(cn_raw, '')
             qty = extract_quantity(subject)
             source = determine_source(description)
 
@@ -158,7 +170,7 @@ try:
                 cells[2].get('label', ''),  # Case Owner
                 cn_int,                     # Case Number
                 description,                # Description
-                '',                         # Comments (left blank)
+                comment,                    # Comments (from Salesforce)
                 qty if qty is not None else '',  # Quantity
                 cells[5].get('label', ''),  # RMA Value
                 cells[6].get('label', ''),  # Case Category

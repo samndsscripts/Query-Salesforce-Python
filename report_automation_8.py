@@ -158,11 +158,11 @@ try:
                 cells[2].get('label', ''),  # Case Owner
                 cn_int,                     # Case Number
                 description,                # Description
+                '',
                 qty if qty is not None else '',  # Quantity
                 cells[5].get('label', ''),  # RMA Value
                 cells[6].get('label', ''),  # Case Category
                 cells[7].get('label', ''),  # Account Name
-                '',                         # Comments
                 cells[8].get('label', ''),  # Contact Type
                 cells[9].get('label', ''),  # Shipping Whse
                 source                      # Source
@@ -170,17 +170,12 @@ try:
             new_rows_to_add.append(new_row)
             existing_cases.add(cn_int)
 
-        # --- Append to Excel Table properly ---
+        # --- Append to Excel ---
         if new_rows_to_add:
-            # Determine first empty row in the table body
-            header_rows = 1
-            table_body_rows = len(table_out.range.value) - header_rows
-            start_row = table_out.range.row + header_rows + table_body_rows
+            start_row = table_out.range.last_cell.row + 1
             start_col = table_out.range.column
-
             sheet_out.range((start_row, start_col)).value = new_rows_to_add
-
-            print(f"\n✅ Added {len(new_rows_to_add)} new row(s) to Excel Table.\n")
+            print(f"\n✅ Added {len(new_rows_to_add)} new row(s) to Excel.\n")
             for nr in new_rows_to_add:
                 print(f" → Case {nr[3]} | Qty: {nr[5] or 'N/A'} | Source: {nr[-1]}")
         else:

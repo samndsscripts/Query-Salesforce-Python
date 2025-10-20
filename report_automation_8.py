@@ -77,51 +77,6 @@ def determine_source(description):
     except Exception:
         return "N/A"
 
-# --- Fetch all comments for new cases in a single batch ---
-def fetch_all_comments(new_case_numbers):
-    """Return a dict mapping CaseNumber -> combined comments text"""
-    if not new_case_numbers:
-        return {}
-
-    # Step 1: Get the Case IDs for all new CaseNumbers
-    quoted_cases = ",".join(f"'{cn}'" for cn in new_case_numbers)
-    case_query = f"SELECT Id, CaseNumber FROM Case WHERE CaseNumber IN ({quoted_cases})"
-    try:
-        case_result = sf.query_all(case_query)
-        records = case_result.get('records', [])
-        case_id_map = {rec['Id']: rec['CaseNumber'] for rec in records}
-    except Exception as e:
-        print("⚠️ Error fetching case IDs:", e)
-        return {}
-
-    if not case_id_map:
-        return {}
-
-    # Step 2: Query all comments for those Case IDs in a single batch
-    quoted_ids = ",".join(f"'{cid}'" for cid in case_id_map.keys())
-    comment_query = f"""
-        SELECT ParentId, CommentBody, CreatedDate
-        FROM CaseComment
-        WHERE ParentId IN ({quoted_ids})
-        ORDER BY CreatedDate ASC
-    """
-    try:
-        comments_result = sf.query_all(comment_query)
-        comment_records = comments_result.get('records', [])
-    except Exception as e:
-        print("⚠️ Error fetching comments:", e)
-        return {}
-
-    # Step 3: Combine comments per CaseNumber
-    comments_by_case = {cn: "" for cn in new_case_numbers}
-    for c in comment_records:
-        case_number = case_id_map.get(c['ParentId'])
-        if case_number:
-            prefix = f"[{c['CreatedDate']}] "
-            comments_by_case[case_number] += prefix + c['CommentBody'] + "\n"
-
-    return comments_by_case
-
 # --- Main Loop ---
 REPORT_ID = "00OUI00000EsGR72AN"
 CYCLE_SECONDS = 60
@@ -167,7 +122,7 @@ try:
             time.sleep(CYCLE_SECONDS)
             continue
 
-        # --- Batch SOQL: get subjects ---
+        # --- Batch SOQL: get titles ---
         case_subject_map = {}
         for batch in [new_case_numbers[i:i+SOQL_BATCH] for i in range(0, len(new_case_numbers), SOQL_BATCH)]:
             quoted = ",".join(f"'{cn}'" for cn in batch)
@@ -178,9 +133,6 @@ try:
                     case_subject_map[rec['CaseNumber']] = rec.get('Subject', '')
             except Exception as e:
                 print("⚠️ SOQL batch failed:", e)
-
-        # --- Batch fetch all comments ---
-        comments_map = fetch_all_comments(new_case_numbers)
 
         # --- Build new rows ---
         new_rows_to_add = []
@@ -200,20 +152,17 @@ try:
             qty = extract_quantity(subject)
             source = determine_source(description)
 
-            # Fetch all comments combined from batch map
-            comments_text = comments_map.get(cn_raw, '')
-
             new_row = [
                 cells[0].get('label', ''),  # Opened Date
                 cells[1].get('label', ''),  # Case Reason
                 cells[2].get('label', ''),  # Case Owner
                 cn_int,                     # Case Number
                 description,                # Description
-                comments_text,              # Comments (all combined)
                 qty if qty is not None else '',  # Quantity
                 cells[5].get('label', ''),  # RMA Value
                 cells[6].get('label', ''),  # Case Category
                 cells[7].get('label', ''),  # Account Name
+                '',                         # Comments
                 cells[8].get('label', ''),  # Contact Type
                 cells[9].get('label', ''),  # Shipping Whse
                 source                      # Source
@@ -221,14 +170,17 @@ try:
             new_rows_to_add.append(new_row)
             existing_cases.add(cn_int)
 
-        # --- Append to Excel ---
+        # --- Append directly into Excel table ---
         if new_rows_to_add:
-            start_row = table_out.range.last_cell.row + 1
+            table_out.add_rows(len(new_rows_to_add))  # Expand table by batch
+            last_row = table_out.range.last_cell.row
             start_col = table_out.range.column
+            start_row = last_row - len(new_rows_to_add) + 1
             sheet_out.range((start_row, start_col)).value = new_rows_to_add
-            print(f"\n✅ Added {len(new_rows_to_add)} new row(s) to Excel.\n")
+
+            print(f"\n✅ Added {len(new_rows_to_add)} new row(s) into the table.\n")
             for nr in new_rows_to_add:
-                print(f" → Case {nr[3]} | Qty: {nr[6] or 'N/A'} | Source: {nr[-1]}")
+                print(f" → Case {nr[3]} | Qty: {nr[5] or 'N/A'} | Source: {nr[-1]}")
         else:
             print("No valid new rows to add this cycle.")
 

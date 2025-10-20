@@ -77,30 +77,50 @@ def determine_source(description):
     except Exception:
         return "N/A"
 
-def fetch_case_comments(case_number):
-    """Fetch all comments for a given CaseNumber and combine them."""
-    try:
-        case_result = sf.query(f"SELECT Id FROM Case WHERE CaseNumber = '{case_number}'")
-        case_records = case_result.get('records', [])
-        if not case_records:
-            return ''
+# --- Fetch all comments for new cases in a single batch ---
+def fetch_all_comments(new_case_numbers):
+    """Return a dict mapping CaseNumber -> combined comments text"""
+    if not new_case_numbers:
+        return {}
 
-        case_id = case_records[0]['Id']
-        comments = sf.query(f"""
-            SELECT CommentBody, CreatedDate
-            FROM CaseComment
-            WHERE ParentId = '{case_id}'
-            ORDER BY CreatedDate ASC
-        """)
-        comment_records = comments.get('records', [])
-        if not comment_records:
-            return ''
-        # Combine all comments with timestamp headers
-        combined = "\n".join([f"[{c['CreatedDate']}] {c['CommentBody']}" for c in comment_records])
-        return combined
+    # Step 1: Get the Case IDs for all new CaseNumbers
+    quoted_cases = ",".join(f"'{cn}'" for cn in new_case_numbers)
+    case_query = f"SELECT Id, CaseNumber FROM Case WHERE CaseNumber IN ({quoted_cases})"
+    try:
+        case_result = sf.query_all(case_query)
+        records = case_result.get('records', [])
+        case_id_map = {rec['Id']: rec['CaseNumber'] for rec in records}
     except Exception as e:
-        print(f"⚠️ Error fetching comments for case {case_number}: {e}")
-        return ''
+        print("⚠️ Error fetching case IDs:", e)
+        return {}
+
+    if not case_id_map:
+        return {}
+
+    # Step 2: Query all comments for those Case IDs in a single batch
+    quoted_ids = ",".join(f"'{cid}'" for cid in case_id_map.keys())
+    comment_query = f"""
+        SELECT ParentId, CommentBody, CreatedDate
+        FROM CaseComment
+        WHERE ParentId IN ({quoted_ids})
+        ORDER BY CreatedDate ASC
+    """
+    try:
+        comments_result = sf.query_all(comment_query)
+        comment_records = comments_result.get('records', [])
+    except Exception as e:
+        print("⚠️ Error fetching comments:", e)
+        return {}
+
+    # Step 3: Combine comments per CaseNumber
+    comments_by_case = {cn: "" for cn in new_case_numbers}
+    for c in comment_records:
+        case_number = case_id_map.get(c['ParentId'])
+        if case_number:
+            prefix = f"[{c['CreatedDate']}] "
+            comments_by_case[case_number] += prefix + c['CommentBody'] + "\n"
+
+    return comments_by_case
 
 # --- Main Loop ---
 REPORT_ID = "00OUI00000EsGR72AN"
@@ -159,6 +179,9 @@ try:
             except Exception as e:
                 print("⚠️ SOQL batch failed:", e)
 
+        # --- Batch fetch all comments ---
+        comments_map = fetch_all_comments(new_case_numbers)
+
         # --- Build new rows ---
         new_rows_to_add = []
         for row in report_rows:
@@ -177,8 +200,8 @@ try:
             qty = extract_quantity(subject)
             source = determine_source(description)
 
-            # Fetch all comments combined
-            comments_text = fetch_case_comments(cn_raw)
+            # Fetch all comments combined from batch map
+            comments_text = comments_map.get(cn_raw, '')
 
             new_row = [
                 cells[0].get('label', ''),  # Opened Date

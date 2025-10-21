@@ -254,15 +254,19 @@ try:
             printed_rows.append((cn_int, qty, subject, bool(comments)))
             existing_cases.add(cn_int)
 
-        # --- Write new rows to Excel ---
+        # --- Write new rows to Excel safely ---
         if new_rows_to_add:
-            list_obj = table_out.api
-            for row_data in new_rows_to_add:
-                # Add a new ListRow to the Table/ListObject
-                list_obj.ListRows.Add()
-                # Write to last row of the visible table range
-                new_row_range = table_out.range.rows[-1]
-                new_row_range.value = [row_data]
+            # Find the first empty row below the table
+            last_row = table_out.range.last_cell.row
+            first_empty_row = last_row + 1
+            start_col = table_out.range.column
+
+            # Write all new rows at once
+            sheet_out.range((first_empty_row, start_col)).value = new_rows_to_add
+
+            # Let Excel automatically expand the table if applicable
+            sheet_out.activate()
+            wb.app.calculate()
 
         # --- Print summary ---
         for cn_int, qty, subject, has_comment in printed_rows:

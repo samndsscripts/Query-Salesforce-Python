@@ -1,18 +1,17 @@
-# version8_caseIDs_full.py
 import time
 import re
 import os
-from collections import defaultdict
 import pandas as pd
 import xlwings as xw
-from simple_salesforce import Salesforce
 from rapidfuzz import process
+from simple_salesforce import Salesforce
+from datetime import datetime
 from colorama import init as colorama_init, Fore, Style
 
-# Initialize colorama for colored terminal output
+# Initialize colorama
 colorama_init(autoreset=True)
 
-# ----- Salesforce login -----
+# --- Salesforce login ---
 sf = Salesforce(
     username='samuelcooper@ndspro.com',
     password='Summer@NDS2025',
@@ -20,85 +19,52 @@ sf = Salesforce(
     instance_url='https://nds.my.salesforce.com'
 )
 
-# ----- Excel workbook setup -----
+# --- Workbook setup ---
 WB_PATH = r"C:\Users\emp35107\OneDrive - NORMA Group\Documents\PPMs.xlsx"
-SUPPLIER_SHEET = 'Class Site Supplier'
-SUPPLIER_TABLE = 'Table3'
-OUTPUT_SHEET = 'test'
-OUTPUT_TABLE = 'test'
-
 wb = xw.Book(WB_PATH)
-sheet_sup = wb.sheets[SUPPLIER_SHEET]
-sheet_out = wb.sheets[OUTPUT_SHEET]
-table_out = sheet_out.tables[OUTPUT_TABLE]
 
-# --- Load supplier data (precompute normalized lists) ---
-table_range = sheet_sup.tables[SUPPLIER_TABLE].range
-supplier_df = pd.DataFrame(table_range.value[1:], columns=table_range.value[0]).fillna('')
+sheet_sup = wb.sheets['Class Site Supplier']
+sheet_out = wb.sheets['test']
+table_out = sheet_out.tables['test']
 
+# --- Load supplier data ---
+table_range = sheet_sup.tables['Table3'].range
+supplier_df = pd.DataFrame(table_range.value[1:], columns=table_range.value[0])
+supplier_df = supplier_df.fillna('')
 stock_codes_list = supplier_df['Stock Code'].astype(str).tolist()
-man_sites_list = supplier_df['Mfg Plant Name'].astype(str).tolist()
-suppliers_list = supplier_df['Supplier'].astype(str).tolist()
-
-# Pre-normalize stock codes for fast fuzzy matching
-def normalize(text: str) -> str:
-    t = str(text or "").lower()
-    t = re.sub(r"[^a-z0-9\s]", " ", t)
-    t = re.sub(r"\s+", " ", t).strip()
-    return t
-
-normalized_stock_codes = [normalize(s) for s in stock_codes_list]
+man_sites_list   = supplier_df['Mfg Plant Name'].astype(str).tolist()
+suppliers_list   = supplier_df['Supplier'].astype(str).tolist()
+normalized_stock_codes = [re.sub(r"[^a-z0-9\s]", " ", s.lower()).strip() for s in stock_codes_list]
 
 # --- Helpers ---
 def clear_console():
     os.system('cls' if os.name == 'nt' else 'clear')
 
 def parse_case_number(x):
-    """
-    Safer parsing: pull all digits and convert to int if possible.
-    This handles values like 'Case 000123' or '123.0' or '123'.
-    """
     try:
-        xs = str(x).strip()
-        if xs == "":
-            return None
-        digits = re.findall(r"\d+", xs)
-        if not digits:
-            return None
-        return int("".join(digits))
-    except Exception:
+        return int(float(str(x).strip()))
+    except:
         return None
+
+def normalize(text):
+    t = str(text or '').lower()
+    t = re.sub(r"[^a-z0-9\s]", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
 
 def extract_quantity(title):
-    """
-    Robust quantity extraction:
-    - captures patterns like 'qty: 5', 'qty - 5', '5 pcs', '5 pc'
-    - sums multiple matches in the same text
-    """
     if not title:
         return None
-    text = str(title).lower()
-    # find "qty: 5" or "qty - 5" etc.
-    qty_after_matches = re.findall(r'qty\s*[:\-]?\s*(\d+)', text)
-    # find "5 pcs" or "5 pc" or "5pcs"
-    pcs_before_matches = re.findall(r'(\d+)\s*pcs?\b', text)
-    # also handle patterns like "5x" (optional)
-    x_matches = re.findall(r'(\d+)\s*x\b', text)
-
-    all_nums = qty_after_matches + pcs_before_matches + x_matches
-    total = sum(int(x) for x in all_nums if x.isdigit()) if all_nums else 0
-
-    return total if total > 0 else None
-
-def chunks(lst, n):
-    for i in range(0, len(lst), n):
-        yield lst[i:i+n]
+    text = title.lower()
+    matches = re.findall(r'(?:qty\s*[:\-]?\s*(\d+))|(?:(\d+)\s*pcs?)', text)
+    total_qty = 0
+    for m in matches:
+        num = next((int(x) for x in m if x and x.isdigit()), None)
+        if num:
+            total_qty += num
+    return total_qty if total_qty > 0 else None
 
 def determine_source(description):
-    """
-    Use normalized_stock_codes to fuzzy-match against description.
-    Return suppliers_list[idx] if present, else man_sites_list[idx], else 'N/A'.
-    """
     nd = normalize(description)
     if not nd:
         return "N/A"
@@ -108,11 +74,11 @@ def determine_source(description):
     best_norm_code = match[0]
     try:
         idx = normalized_stock_codes.index(best_norm_code)
-        supplier = suppliers_list[idx].strip() if idx < len(suppliers_list) else ""
+        supplier = suppliers_list[idx].strip()
         if supplier:
             return supplier
-        # fallback to manufacturing site if supplier blank
-        return man_sites_list[idx] if idx < len(man_sites_list) and man_sites_list[idx].strip() else "N/A"
+        else:
+            return man_sites_list[idx] if idx < len(man_sites_list) else "N/A"
     except Exception:
         return "N/A"
 
@@ -139,9 +105,9 @@ try:
         # --- Pull Salesforce report ---
         try:
             report_data = sf.restful(f'analytics/reports/{REPORT_ID}', params={'includeDetails': 'true'})
-            report_rows = report_data.get('factMap', {}).get('T!T', {}).get('rows', []) or []
+            report_rows = report_data.get('factMap', {}).get('T!T', {}).get('rows', [])
         except Exception as e:
-            print(Fore.RED + "❌ Error fetching report:", str(e))
+            print(Fore.RED + "❌ Error fetching report:", e)
             time.sleep(CYCLE_SECONDS)
             continue
 
@@ -162,77 +128,52 @@ try:
             time.sleep(CYCLE_SECONDS)
             continue
 
-        # ---------------------------------------------------------------------
-        # --- Batch SOQL: Get Case IDs, Subjects, and Comments ---
-        # ---------------------------------------------------------------------
-        case_data_map = {}  # { CaseNumber: { 'Id': ..., 'Subject': ... } }
-
-        for batch in chunks(new_case_numbers, SOQL_BATCH):
+        # --- Batch SOQL: get titles and comments ---
+        case_subject_map = {}
+        case_comments_map = {}
+        for batch in [new_case_numbers[i:i+SOQL_BATCH] for i in range(0, len(new_case_numbers), SOQL_BATCH)]:
             quoted = ",".join(f"'{cn}'" for cn in batch)
-            soql = f"SELECT Id, CaseNumber, Subject FROM Case WHERE CaseNumber IN ({quoted})"
+            soql = f"""
+                SELECT CaseNumber, Subject, 
+                (SELECT CommentBody FROM CaseComments ORDER BY CreatedDate DESC LIMIT 1)
+                FROM Case 
+                WHERE CaseNumber IN ({quoted})
+            """
             try:
                 result = sf.query_all(soql)
-                records = result.get('records', [])
-                for rec in records:
-                    cn = rec['CaseNumber']
-                    case_data_map[cn] = {
-                        'Id': rec.get('Id', ''),
-                        'Subject': rec.get('Subject', '')
-                    }
+                for rec in result.get('records', []):
+                    case_number = rec.get('CaseNumber', '')
+                    case_subject_map[case_number] = rec.get('Subject', '')
+                    comments = rec.get('CaseComments', {}).get('records', [])
+                    latest_comment = comments[0]['CommentBody'] if comments else ''
+                    case_comments_map[case_number] = latest_comment
             except Exception as e:
-                print(Fore.YELLOW + "⚠️ SOQL batch failed while getting IDs:", str(e))
+                print(Fore.YELLOW + "⚠️ SOQL batch failed:", e)
 
-        # --- Batch SOQL: Get Comments for those Case IDs ---
-        case_comments_map = {}  # { CaseNumber: "concatenated comment bodies" }
-
-        case_ids = [data['Id'] for data in case_data_map.values() if data.get('Id')]
-        for batch in chunks(case_ids, SOQL_BATCH):
-            quoted = ",".join(f"'{cid}'" for cid in batch)
-            soql = f"SELECT ParentId, CommentBody FROM CaseComment WHERE ParentId IN ({quoted})"
-            try:
-                result = sf.query_all(soql)
-                records = result.get('records', [])
-                for rec in records:
-                    parent_id = rec.get('ParentId', '')
-                    comment = rec.get('CommentBody', '').strip()
-                    if not comment:
-                        continue
-                    # Find CaseNumber by ID
-                    for cn, data in case_data_map.items():
-                        if data['Id'] == parent_id:
-                            case_comments_map.setdefault(cn, []).append(comment)
-                            break
-            except Exception as e:
-                print(Fore.YELLOW + "⚠️ SOQL batch failed while getting comments:", str(e))
-
-        # --- Combine Subjects and Comments ---
-        case_combined_map = {}
-        for cn, data in case_data_map.items():
-            case_combined_map[cn] = {
-                'Subject': data.get('Subject', ''),
-                'Comments': "\n---\n".join(case_comments_map.get(cn, []))
-            }
-
-        # ---------------------------------------------------------------------
-        # --- Build and Append New Rows ---
-        # ---------------------------------------------------------------------
+        # --- Build new rows ---
         new_rows_to_add = []
-        printed_rows = []
-
         for row in report_rows:
             cells = row.get('dataCells', [])
             if len(cells) < 10:
                 continue
             cn_raw = str(cells[3].get('label', '')).strip()
             cn_int = parse_case_number(cn_raw)
-            if not cn_int or cn_raw not in case_combined_map or cn_int in existing_cases:
+            if not cn_int or cn_int in existing_cases:
+                continue
+            if cn_raw not in new_case_numbers:
                 continue
 
             description = str(cells[4].get('label', ''))
-            subject = case_combined_map[cn_raw].get('Subject', '')
-            qty = extract_quantity(subject)
+            comments = case_comments_map.get(cn_raw, '')
+            subject = case_subject_map.get(cn_raw, '')
+            qty = extract_quantity(subject)  # ✅ Fixed: use subject like old script
+            rma_value = cells[5].get('label', '')
+            case_category = cells[6].get('label', '')
+            account_name = cells[7].get('label', '')
+            contact_type = cells[8].get('label', '')
+            shipping_whse = cells[9].get('label', '')
             source = determine_source(description)
-            comments = case_combined_map[cn_raw].get('Comments', '')
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             new_row = [
                 cells[0].get('label', ''),  # Opened Date
@@ -240,40 +181,45 @@ try:
                 cells[2].get('label', ''),  # Case Owner
                 cn_int,                     # Case Number
                 description,                # Description
-                subject,                    # Subject
-                qty if qty else '',         # Quantity
                 comments,                   # Comments
-                cells[5].get('label', ''),  # RMA Value
-                cells[6].get('label', ''),  # Case Category
-                cells[7].get('label', ''),  # Account Name
-                cells[8].get('label', ''),  # Contact Type
-                cells[9].get('label', ''),  # Shipping Whse
-                source                      # Source (Supplier or Mfg Plant)
+                qty if qty else '',         # Quantity
+                rma_value,                  # RMA Value
+                case_category,              # Case Category
+                account_name,               # Account Name
+                contact_type,               # Contact Type
+                shipping_whse,              # Shipping Whse
+                source,                     # Source
+                timestamp                   # Time Stamp
             ]
             new_rows_to_add.append(new_row)
-            printed_rows.append((cn_int, qty, subject, bool(comments)))
             existing_cases.add(cn_int)
 
-        # --- Write new rows to Excel safely ---
+        # --- Append to Excel inside table ---
         if new_rows_to_add:
-            # Find the first empty row below the table
-            last_row = table_out.range.last_cell.row
-            first_empty_row = last_row + 1
+            if table_out.data_body_range:
+                start_row = table_out.data_body_range.last_cell.row + 1
+            else:
+                start_row = table_out.range.row + 1
+
             start_col = table_out.range.column
 
-            # Write all new rows at once
-            sheet_out.range((first_empty_row, start_col)).value = new_rows_to_add
+            # Match table column count
+            num_table_cols = len(table_out.range.value[0]) if table_out.range.value else len(new_rows_to_add[0])
+            for r in new_rows_to_add:
+                if len(r) < num_table_cols:
+                    r.extend([''] * (num_table_cols - len(r)))
+                elif len(r) > num_table_cols:
+                    r = r[:num_table_cols]
 
-            # Let Excel automatically expand the table if applicable
-            sheet_out.activate()
-            wb.app.calculate()
+            sheet_out.range((start_row, start_col)).value = new_rows_to_add
 
-        # --- Print summary ---
-        for cn_int, qty, subject, has_comment in printed_rows:
-            comment_status = "💬" if has_comment else ""
-            print(Fore.GREEN + f"New → Case {cn_int} | Qty: {qty or 'N/A'} | {comment_status} {subject}")
+            print(Fore.GREEN + f"\n✅ Added {len(new_rows_to_add)} new row(s) to Excel.\n")
+            for nr in new_rows_to_add:
+                print(f" → Case {nr[3]} | Qty: {nr[6] or 'N/A'} | Source: {nr[12]} | Added: {nr[13]}")
+        else:
+            print(Fore.YELLOW + "No valid new rows to add this cycle.")
 
-        print(f"\n✅ Added {len(new_rows_to_add)} new row(s). Sleeping {CYCLE_SECONDS}s...\n")
+        print(f"\nSleeping {CYCLE_SECONDS}s before next check...\n")
         time.sleep(CYCLE_SECONDS)
 
 except KeyboardInterrupt:

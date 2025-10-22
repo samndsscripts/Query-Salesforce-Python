@@ -69,32 +69,32 @@ def extract_quantity(title):
             total_qty += num
     return total_qty if total_qty > 0 else None
 
-# --- Determine Source with top-N fuzzy matches (backward compatible) ---
-def determine_source(description, top_n=3, threshold=70, exact_threshold=95):
+# --- Determine Source with top-N fuzzy matches (updated for 90% exact match) ---
+def determine_source(description, top_n=3, fuzzy_threshold=70, exact_threshold=90):
     """
     Compare the case description text to the Class Site Supplier table
     to identify the part and most likely source.
-    
+
     Returns:
         final_source: string
         top_matches: list of up to 3 formatted matches
     """
-    fuzzy_threshold = threshold  # alias for backward compatibility
     nd = normalize(description)
     if not nd:
         return "N/A", []
 
-    # --- First, check for exact match ---
+    # --- First, check for exact match (≥ exact_threshold) ---
     exact_matches = []
     for i, code in enumerate(normalized_stock_codes):
         score = process.extractOne(nd, [code])[1]
         if score >= exact_threshold:
             supplier = suppliers_list[i].strip()
-            source = supplier if supplier else (man_sites_list[i] if i < len(man_sites_list) else "N/A")
+            source = supplier if supplier else (man_sites_list[i].strip() if i < len(man_sites_list) else "N/A")
             exact_matches.append((stock_codes_list[i], source, score))
     
     if exact_matches:
-        # Use the first exact match only; other top matches remain blank
+        # Pick the highest-scoring exact match
+        exact_matches.sort(key=lambda x: x[2], reverse=True)
         code, source, _ = exact_matches[0]
         return source, [f"Stock Code: {code} | Source: {source}", '', '']
 
@@ -114,10 +114,10 @@ def determine_source(description, top_n=3, threshold=70, exact_threshold=95):
             source = supplier.strip() if supplier.strip() else (mfg.strip() if mfg.strip() else "N/A")
             top_sources_with_scores.append((code, source, score))
 
-    # Sort by score
+    # Sort by score descending
     top_sources_with_scores.sort(key=lambda x: x[2], reverse=True)
 
-    # Format top matches
+    # Format top matches (up to top_n)
     top_matches = [
         f"Stock Code: {code} | Source: {src}"
         for code, src, _ in top_sources_with_scores[:top_n]
@@ -125,10 +125,9 @@ def determine_source(description, top_n=3, threshold=70, exact_threshold=95):
     while len(top_matches) < 3:
         top_matches.append('')
 
-    # Determine majority source
+    # --- Pick highest-scoring match as final source ---
     if top_sources_with_scores:
-        source_counter = Counter([src for _, src, _ in top_sources_with_scores])
-        final_source = source_counter.most_common(1)[0][0]
+        final_source = top_sources_with_scores[0][1]
     else:
         final_source = "N/A"
 

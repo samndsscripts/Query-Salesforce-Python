@@ -1,3 +1,139 @@
+import time
+import re
+import os
+import pandas as pd
+import xlwings as xw
+from rapidfuzz import process
+from simple_salesforce import Salesforce
+from datetime import datetime
+from colorama import init as colorama_init, Fore, Style
+from collections import Counter
+
+# Initialize colorama
+colorama_init(autoreset=True)
+
+# --- Salesforce login ---
+sf = Salesforce(
+    username='samuelcooper@ndspro.com',
+    password='Summer@NDS2025',
+    security_token='zjU2IJAfQmx6zDxgOj3aLkyPQ',
+    instance_url='https://nds.my.salesforce.com'
+)
+
+# --- Workbook setup ---
+WB_PATH = r"C:\Users\emp35107\OneDrive - NORMA Group\Documents\PPMs.xlsx"
+wb = xw.Book(WB_PATH)
+sheet_sup = wb.sheets['Class Site Supplier']
+sheet_out = wb.sheets['test']
+table_out = sheet_out.tables['test']
+
+# --- Load supplier data ---
+table_range = sheet_sup.tables['Table3'].range
+supplier_df = pd.DataFrame(table_range.value[1:], columns=table_range.value[0])
+supplier_df = supplier_df.fillna('')
+
+stock_codes_list = supplier_df['Stock Code'].astype(str).tolist()
+man_sites_list   = supplier_df['Mfg Plant Name'].astype(str).tolist()
+suppliers_list   = supplier_df['Supplier'].astype(str).tolist()
+
+normalized_stock_codes = [
+    re.sub(r"[^a-z0-9\s]", " ", s.lower()).strip() for s in stock_codes_list
+]
+
+# --- Helpers ---
+def clear_console():
+    os.system('cls' if os.name == 'nt' else 'clear')
+
+def parse_case_number(x):
+    try:
+        return int(float(str(x).strip()))
+    except:
+        return None
+
+def normalize(text):
+    t = str(text or '').lower()
+    t = re.sub(r"[^a-z0-9\s]", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+def extract_quantity(title):
+    """Extract quantity from case title (subject line)."""
+    if not title:
+        return None
+    text = title.lower()
+    matches = re.findall(r'(?:qty\s*[:\-]?\s*(\d+))|(?:(\d+)\s*pcs?)', text)
+    total_qty = 0
+    for m in matches:
+        num = next((int(x) for x in m if x and x.isdigit()), None)
+        if num:
+            total_qty += num
+    return total_qty if total_qty > 0 else None
+
+# --- Determine Source with top-N fuzzy matches (backward compatible) ---
+def determine_source(description, top_n=3, threshold=70, exact_threshold=95):
+    """
+    Compare the case description text to the Class Site Supplier table
+    to identify the part and most likely source.
+    
+    Returns:
+        final_source: string
+        top_matches: list of up to 3 formatted matches
+    """
+    fuzzy_threshold = threshold  # alias for backward compatibility
+    nd = normalize(description)
+    if not nd:
+        return "N/A", []
+
+    # --- First, check for exact match ---
+    exact_matches = []
+    for i, code in enumerate(normalized_stock_codes):
+        score = process.extractOne(nd, [code])[1]
+        if score >= exact_threshold:
+            supplier = suppliers_list[i].strip()
+            source = supplier if supplier else (man_sites_list[i] if i < len(man_sites_list) else "N/A")
+            exact_matches.append((stock_codes_list[i], source, score))
+    
+    if exact_matches:
+        # Use the first exact match only; other top matches remain blank
+        code, source, _ = exact_matches[0]
+        return source, [f"Stock Code: {code} | Source: {source}", '', '']
+
+    # --- Filter candidates by string length (~90% to 110%) ---
+    desc_len = len(nd)
+    candidates = [
+        (i, stock_codes_list[i], suppliers_list[i], man_sites_list[i], normalized_stock_codes[i])
+        for i in range(len(stock_codes_list))
+        if 0.9 * desc_len <= len(normalized_stock_codes[i]) <= 1.1 * desc_len
+    ]
+
+    # --- Compute fuzzy matches ---
+    top_sources_with_scores = []
+    for i, code, supplier, mfg, norm_code in candidates:
+        score = process.extractOne(nd, [norm_code])[1]
+        if score >= fuzzy_threshold:
+            source = supplier.strip() if supplier.strip() else (mfg.strip() if mfg.strip() else "N/A")
+            top_sources_with_scores.append((code, source, score))
+
+    # Sort by score
+    top_sources_with_scores.sort(key=lambda x: x[2], reverse=True)
+
+    # Format top matches
+    top_matches = [
+        f"Stock Code: {code} | Source: {src}"
+        for code, src, _ in top_sources_with_scores[:top_n]
+    ]
+    while len(top_matches) < 3:
+        top_matches.append('')
+
+    # Determine majority source
+    if top_sources_with_scores:
+        source_counter = Counter([src for _, src, _ in top_sources_with_scores])
+        final_source = source_counter.most_common(1)[0][0]
+    else:
+        final_source = "N/A"
+
+    return final_source, top_matches
+
 REPORT_ID = "00OUI00000EsGR72AN"
 CYCLE_SECONDS = 60
 SOQL_BATCH = 100
@@ -189,3 +325,5 @@ try:
 
 except KeyboardInterrupt:
     print("\n" + Style.BRIGHT + "Script stopped by user.")
+
+

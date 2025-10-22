@@ -31,10 +31,14 @@ table_out = sheet_out.tables['test']
 table_range = sheet_sup.tables['Table3'].range
 supplier_df = pd.DataFrame(table_range.value[1:], columns=table_range.value[0])
 supplier_df = supplier_df.fillna('')
+
 stock_codes_list = supplier_df['Stock Code'].astype(str).tolist()
 man_sites_list   = supplier_df['Mfg Plant Name'].astype(str).tolist()
 suppliers_list   = supplier_df['Supplier'].astype(str).tolist()
-normalized_stock_codes = [re.sub(r"[^a-z0-9\s]", " ", s.lower()).strip() for s in stock_codes_list]
+
+normalized_stock_codes = [
+    re.sub(r"[^a-z0-9\s]", " ", s.lower()).strip() for s in stock_codes_list
+]
 
 # --- Helpers ---
 def clear_console():
@@ -53,6 +57,7 @@ def normalize(text):
     return t
 
 def extract_quantity(title):
+    """Extract quantity from case title (subject line)."""
     if not title:
         return None
     text = title.lower()
@@ -66,11 +71,16 @@ def extract_quantity(title):
 
 # --- Determine Source with top-N fuzzy matches ---
 def determine_source(description, top_n=3, threshold=70):
+    """
+    Compare the case description text to the Class Site Supplier table
+    to identify the part and most likely source.
+    Returns (final_source, [top_match1, top_match2, top_match3]).
+    """
     nd = normalize(description)
     if not nd:
         return "N/A", []
 
-    # --- Get top N fuzzy matches ---
+    # Get top N fuzzy matches
     matches = process.extract(nd, normalized_stock_codes, limit=top_n)
     
     top_sources_with_scores = []
@@ -82,22 +92,27 @@ def determine_source(description, top_n=3, threshold=70):
             idx = normalized_stock_codes.index(best_norm_code)
             supplier = suppliers_list[idx].strip()
             source = supplier if supplier else (man_sites_list[idx] if idx < len(man_sites_list) else "N/A")
-            top_sources_with_scores.append((source, score))
+            top_sources_with_scores.append((stock_codes_list[idx], source, score))
         except Exception:
-            top_sources_with_scores.append(("N/A", score))
+            top_sources_with_scores.append(("N/A", "N/A", score))
     
-    # --- Sort sources by descending score ---
-    top_sources_with_scores.sort(key=lambda x: x[1], reverse=True)
-    top_sources = [s for s, sc in top_sources_with_scores]
+    # Sort by best score
+    top_sources_with_scores.sort(key=lambda x: x[2], reverse=True)
 
-    # --- Determine final source by most common among top matches ---
-    if top_sources:
-        source_counter = Counter(top_sources)
+    # Format matches like "Stock Code: X | Source: Y"
+    top_matches = [
+        f"Stock Code: {code} | Source: {src}"
+        for code, src, _ in top_sources_with_scores
+    ]
+
+    # Determine most frequent or highest confidence source
+    if top_sources_with_scores:
+        source_counter = Counter([src for _, src, _ in top_sources_with_scores])
         final_source = source_counter.most_common(1)[0][0]
     else:
         final_source = "N/A"
 
-    return final_source, top_sources
+    return final_source, top_matches
 
 # --- Main Loop ---
 REPORT_ID = "00OUI00000EsGR72AN"
@@ -124,7 +139,7 @@ try:
             report_data = sf.restful(f'analytics/reports/{REPORT_ID}', params={'includeDetails': 'true'})
             report_rows = report_data.get('factMap', {}).get('T!T', {}).get('rows', [])
         except Exception as e:
-            print(Fore.RED + "❌ Error fetching report:", e)
+            print(Fore.RED + "❌ Error fetching report:", str(e))
             time.sleep(CYCLE_SECONDS)
             continue
 
@@ -145,27 +160,65 @@ try:
             time.sleep(CYCLE_SECONDS)
             continue
 
-        # --- Batch SOQL: get titles and comments ---
+        # --- Batch SOQL: get titles and comments properly ---
         case_subject_map = {}
         case_comments_map = {}
+        case_number_to_id = {}  # Map CaseNumber → Case ID
+
         for batch in [new_case_numbers[i:i+SOQL_BATCH] for i in range(0, len(new_case_numbers), SOQL_BATCH)]:
             quoted = ",".join(f"'{cn}'" for cn in batch)
-            soql = f"""
-                SELECT CaseNumber, Subject, 
-                (SELECT CommentBody FROM CaseComments ORDER BY CreatedDate DESC LIMIT 1)
-                FROM Case 
+
+            # --- Query Case titles (need Ids for next query) ---
+            soql_titles = f"""
+                SELECT Id, CaseNumber, Subject
+                FROM Case
                 WHERE CaseNumber IN ({quoted})
             """
             try:
-                result = sf.query_all(soql)
-                for rec in result.get('records', []):
+                result_titles = sf.query_all(soql_titles)
+
+                if result_titles is None:
+                    print(Fore.YELLOW + f"⚠️ Title query returned None for batch: {batch[:5]}...")
+                    continue
+
+                # Collect Case IDs for comment query
+                case_ids = []
+                for rec in result_titles.get('records', []):
                     case_number = rec.get('CaseNumber', '')
-                    case_subject_map[case_number] = rec.get('Subject', '')
-                    comments = rec.get('CaseComments', {}).get('records', [])
-                    latest_comment = comments[0]['CommentBody'] if comments else ''
-                    case_comments_map[case_number] = latest_comment
+                    subject = rec.get('Subject', None)
+                    case_subject_map[case_number] = subject or ''
+                    case_number_to_id[case_number] = rec.get('Id', '')
+                    if rec.get('Id'):
+                        case_ids.append(rec['Id'])
+
+                # --- Query Comments using Case IDs ---
+                if case_ids:
+                    quoted_ids = ",".join(f"'{cid}'" for cid in case_ids)
+                    soql_comments = f"""
+                        SELECT ParentId, CommentBody
+                        FROM CaseComment
+                        WHERE ParentId IN ({quoted_ids})
+                        ORDER BY CreatedDate DESC
+                    """
+                    try:
+                        result_comments = sf.query_all(soql_comments)
+                        if result_comments and 'records' in result_comments:
+                            # Store latest comment per Case ID
+                            for rec in result_comments['records']:
+                                parent_id = rec.get('ParentId', '')
+                                comment_body = rec.get('CommentBody', '')
+                                if parent_id not in case_comments_map:
+                                    case_comments_map[parent_id] = comment_body
+                        else:
+                            print(Fore.CYAN + f"⚠️ No comments found for batch {batch[:5]}...")
+
+                    except Exception as e:
+                        print(Fore.YELLOW + f"⚠️ Comment query failed: {e}")
+                else:
+                    print(Fore.CYAN + f"⚠️ No Case IDs found for batch {batch[:5]}...")
+
             except Exception as e:
-                print(Fore.YELLOW + "⚠️ SOQL batch failed:", e)
+                print(Fore.YELLOW + f"⚠️ SOQL title query failed: {e}")
 
         # --- Build new rows ---
         new_rows_to_add = []
@@ -181,40 +234,49 @@ try:
                 continue
 
             description = str(cells[4].get('label', ''))
-            comments = case_comments_map.get(cn_raw, '')
+            # Lookup comment using CaseNumber → Case ID
+            case_id = case_number_to_id.get(cn_raw, None)
+            comments = case_comments_map.get(case_id, '') if case_id else ''
             subject = case_subject_map.get(cn_raw, '')
-            qty = extract_quantity(subject)  # use subject
+            qty = extract_quantity(subject)
             rma_value = cells[5].get('label', '')
             case_category = cells[6].get('label', '')
             account_name = cells[7].get('label', '')
             contact_type = cells[8].get('label', '')
             shipping_whse = cells[9].get('label', '')
-            
-            # --- Determine top source matches ---
+
+            # Determine top source matches
             source, top_matches = determine_source(description, top_n=3, threshold=70)
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+            # Add structured match columns
+            top1 = top_matches[0] if len(top_matches) > 0 else ''
+            top2 = top_matches[1] if len(top_matches) > 1 else ''
+            top3 = top_matches[2] if len(top_matches) > 2 else ''
+
             new_row = [
-                cells[0].get('label', ''),          # Opened Date
-                cells[1].get('label', ''),          # Case Reason
-                cells[2].get('label', ''),          # Case Owner
-                cn_int,                             # Case Number
-                description,                        # Description
-                comments,                           # Comments
-                qty if qty else '',                 # Quantity
-                rma_value,                          # RMA Value
-                case_category,                      # Case Category
-                account_name,                       # Account Name
-                contact_type,                       # Contact Type
-                shipping_whse,                      # Shipping Whse
-                ", ".join(top_matches),             # Top Source Matches
-                source,                             # Source
-                timestamp                           # Time Stamp
+                cells[0].get('label', ''),  # Opened Date
+                cells[1].get('label', ''),  # Case Reason
+                cells[2].get('label', ''),  # Case Owner
+                cn_int,                     # Case Number
+                description,                # Description
+                comments,                   # Comments
+                qty if qty else '',         # Quantity
+                rma_value,                  # RMA Value
+                case_category,              # Case Category
+                account_name,               # Account Name
+                contact_type,               # Contact Type
+                shipping_whse,              # Shipping Whse
+                top1,                       # Top Match 1
+                top2,                       # Top Match 2
+                top3,                       # Top Match 3
+                source,                     # Source
+                timestamp                   # Time Stamp
             ]
             new_rows_to_add.append(new_row)
             existing_cases.add(cn_int)
 
-        # --- Append to Excel inside table ---
+        # --- Append to Excel table properly ---
         if new_rows_to_add:
             if table_out.data_body_range:
                 start_row = table_out.data_body_range.last_cell.row + 1
@@ -222,19 +284,11 @@ try:
                 start_row = table_out.range.row + 1
 
             start_col = table_out.range.column
-            num_table_cols = len(table_out.range.value[0]) if table_out.range.value else len(new_rows_to_add[0])
-
-            for r in new_rows_to_add:
-                if len(r) < num_table_cols:
-                    r.extend([''] * (num_table_cols - len(r)))
-                elif len(r) > num_table_cols:
-                    r = r[:num_table_cols]
-
             sheet_out.range((start_row, start_col)).value = new_rows_to_add
 
             print(Fore.GREEN + f"\n✅ Added {len(new_rows_to_add)} new row(s) to Excel.\n")
             for nr in new_rows_to_add:
-                print(f" → Case {nr[3]} | Qty: {nr[6] or 'N/A'} | Source: {nr[13]} | Added: {nr[14]}")
+                print(f" → Case {nr[3]} | Qty: {nr[6] or 'N/A'} | Source: {nr[15]} | Added: {nr[16]}")
         else:
             print(Fore.YELLOW + "No valid new rows to add this cycle.")
 
@@ -243,3 +297,4 @@ try:
 
 except KeyboardInterrupt:
     print("\n" + Style.BRIGHT + "Script stopped by user.")
+

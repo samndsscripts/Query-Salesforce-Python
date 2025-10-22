@@ -133,7 +133,7 @@ def determine_source(description, top_n=3, threshold=70, exact_threshold=95):
         final_source = "N/A"
 
     return final_source, top_matches
-
+#Main Loop
 REPORT_ID = "00OUI00000EsGR72AN"
 CYCLE_SECONDS = 60
 SOQL_BATCH = 100
@@ -325,5 +325,4 @@ try:
 
 except KeyboardInterrupt:
     print("\n" + Style.BRIGHT + "Script stopped by user.")
-
 

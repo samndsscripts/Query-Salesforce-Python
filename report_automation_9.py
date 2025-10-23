@@ -8,16 +8,28 @@ from simple_salesforce import Salesforce
 from datetime import datetime
 from colorama import init as colorama_init, Fore, Style
 from collections import Counter
+from dotenv import load_dotenv  # <-- NEW import
 
 # Initialize colorama
 colorama_init(autoreset=True)
 
-# --- Salesforce login ---
+# --- Load environment variables securely ---
+load_dotenv(r"C:\Users\emp35107\Documents\.env")
+
+SF_USERNAME = os.getenv("SALESFORCE_USERNAME")
+SF_PASSWORD = os.getenv("SALESFORCE_PASSWORD")
+SF_TOKEN    = os.getenv("SALESFORCE_TOKEN")
+SF_INSTANCE = os.getenv("SALESFORCE_INSTANCE")
+
+if not all([SF_USERNAME, SF_PASSWORD, SF_TOKEN, SF_INSTANCE]):
+    raise ValueError("❌ Missing one or more Salesforce environment variables in .env file")
+
+# --- Secure Salesforce login ---
 sf = Salesforce(
-    username='samuelcooper@ndspro.com',
-    password='Summer@NDS2025',
-    security_token='zjU2IJAfQmx6zDxgOj3aLkyPQ',
-    instance_url='https://nds.my.salesforce.com'
+    username=SF_USERNAME,
+    password=SF_PASSWORD,
+    security_token=SF_TOKEN,
+    instance_url=SF_INSTANCE
 )
 
 # --- Workbook setup ---
@@ -69,60 +81,79 @@ def extract_quantity(title):
             total_qty += num
     return total_qty if total_qty > 0 else None
 
-# --- Determine Source with top-N fuzzy matches ---
-def determine_source(description, top_n=3, threshold=70):
+# --- Determine Source with top-N fuzzy matches (updated for 90% exact match) ---
+def determine_source(description, top_n=3, fuzzy_threshold=70, exact_threshold=90):
     """
     Compare the case description text to the Class Site Supplier table
     to identify the part and most likely source.
-    Returns (final_source, [top_match1, top_match2, top_match3]).
+
+    Returns:
+        final_source: string
+        top_matches: list of up to 3 formatted matches
     """
     nd = normalize(description)
     if not nd:
         return "N/A", []
 
-    # Get top N fuzzy matches
-    matches = process.extract(nd, normalized_stock_codes, limit=top_n)
+    # --- First, check for exact match (≥ exact_threshold) ---
+    exact_matches = []
+    for i, code in enumerate(normalized_stock_codes):
+        score = process.extractOne(nd, [code])[1]
+        if score >= exact_threshold:
+            supplier = suppliers_list[i].strip()
+            source = supplier if supplier else (man_sites_list[i].strip() if i < len(man_sites_list) else "N/A")
+            exact_matches.append((stock_codes_list[i], source, score))
     
-    top_sources_with_scores = []
-    for match in matches:
-        best_norm_code, score = match[0], match[1]
-        if score < threshold:
-            continue  # skip low-confidence matches
-        try:
-            idx = normalized_stock_codes.index(best_norm_code)
-            supplier = suppliers_list[idx].strip()
-            source = supplier if supplier else (man_sites_list[idx] if idx < len(man_sites_list) else "N/A")
-            top_sources_with_scores.append((stock_codes_list[idx], source, score))
-        except Exception:
-            top_sources_with_scores.append(("N/A", "N/A", score))
-    
-    # Sort by best score
-    top_sources_with_scores.sort(key=lambda x: x[2], reverse=True)
+    if exact_matches:
+        # Pick the highest-scoring exact match
+        exact_matches.sort(key=lambda x: x[2], reverse=True)
+        code, source, _ = exact_matches[0]
+        return source, [f"Stock Code: {code} | Source: {source}", '', '']
 
-    # Format matches like "Stock Code: X | Source: Y"
-    top_matches = [
-        f"Stock Code: {code} | Source: {src}"
-        for code, src, _ in top_sources_with_scores
+    # --- Filter candidates by string length (~90% to 110%) ---
+    desc_len = len(nd)
+    candidates = [
+        (i, stock_codes_list[i], suppliers_list[i], man_sites_list[i], normalized_stock_codes[i])
+        for i in range(len(stock_codes_list))
+        if 0.9 * desc_len <= len(normalized_stock_codes[i]) <= 1.1 * desc_len
     ]
 
-    # Determine most frequent or highest confidence source
+    # --- Compute fuzzy matches ---
+    top_sources_with_scores = []
+    for i, code, supplier, mfg, norm_code in candidates:
+        score = process.extractOne(nd, [norm_code])[1]
+        if score >= fuzzy_threshold:
+            source = supplier.strip() if supplier.strip() else (mfg.strip() if mfg.strip() else "N/A")
+            top_sources_with_scores.append((code, source, score))
+
+    # Sort by score descending
+    top_sources_with_scores.sort(key=lambda x: x[2], reverse=True)
+
+    # Format top matches (up to top_n)
+    top_matches = [
+        f"Stock Code: {code} | Source: {src}"
+        for code, src, _ in top_sources_with_scores[:top_n]
+    ]
+    while len(top_matches) < 3:
+        top_matches.append('')
+
+    # --- Pick highest-scoring match as final source ---
     if top_sources_with_scores:
-        source_counter = Counter([src for _, src, _ in top_sources_with_scores])
-        final_source = source_counter.most_common(1)[0][0]
+        final_source = top_sources_with_scores[0][1]
     else:
         final_source = "N/A"
 
     return final_source, top_matches
-
-# --- Main Loop ---
+#Main Loop
 REPORT_ID = "00OUI00000EsGR72AN"
 CYCLE_SECONDS = 60
 SOQL_BATCH = 100
 
 try:
     while True:
+        cycle_start_time = time.time()  # reset timer each cycle
         clear_console()
-        print("🔄 Checking for new Salesforce cases...\n")
+        print("🔄 Checking for new Salesforce cases... (Time elapsed: 00:00:00)\n")
 
         # --- Load existing Excel data ---
         table_vals = table_out.range.value
@@ -156,9 +187,7 @@ try:
         print(f"Found {len(new_case_numbers)} new case(s).")
 
         if not new_case_numbers:
-            print(f"No new cases. Sleeping {CYCLE_SECONDS}s...\n")
-            time.sleep(CYCLE_SECONDS)
-            continue
+            print(f"No new cases.\n")
 
         # --- Batch SOQL: get titles and comments properly ---
         case_subject_map = {}
@@ -234,7 +263,6 @@ try:
                 continue
 
             description = str(cells[4].get('label', ''))
-            # Lookup comment using CaseNumber → Case ID
             case_id = case_number_to_id.get(cn_raw, None)
             comments = case_comments_map.get(case_id, '') if case_id else ''
             subject = case_subject_map.get(cn_raw, '')
@@ -246,7 +274,7 @@ try:
             shipping_whse = cells[9].get('label', '')
 
             # Determine top source matches
-            source, top_matches = determine_source(description, top_n=3, threshold=70)
+            source, top_matches = determine_source(description, top_n=3)
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             # Add structured match columns
@@ -292,8 +320,19 @@ try:
         else:
             print(Fore.YELLOW + "No valid new rows to add this cycle.")
 
-        print(f"\nSleeping {CYCLE_SECONDS}s before next check...\n")
-        time.sleep(CYCLE_SECONDS)
+        # --- Sleep with real-time elapsed display ---
+        for i in range(CYCLE_SECONDS):
+            elapsed_seconds = int(time.time() - cycle_start_time)
+            hours, remainder = divmod(elapsed_seconds, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            elapsed_str = f"{hours:02}:{minutes:02}:{seconds:02}"
+
+            clear_console()
+            print(f"🔄 Checking for new Salesforce cases... (Time elapsed: {elapsed_str})\n")
+            print(f"Found {len(new_case_numbers)} new case(s).")
+            if not new_case_numbers:
+                print(f"No new cases.")
+            time.sleep(1)
 
 except KeyboardInterrupt:
     print("\n" + Style.BRIGHT + "Script stopped by user.")

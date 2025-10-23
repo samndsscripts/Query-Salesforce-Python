@@ -8,16 +8,28 @@ from simple_salesforce import Salesforce
 from datetime import datetime
 from colorama import init as colorama_init, Fore, Style
 from collections import Counter
+from dotenv import load_dotenv  # <-- NEW import
 
 # Initialize colorama
 colorama_init(autoreset=True)
 
-# --- Salesforce login ---
+# --- Load environment variables securely ---
+load_dotenv(r"C:\Users\emp35107\Documents\.env")
+
+SF_USERNAME = os.getenv("SALESFORCE_USERNAME")
+SF_PASSWORD = os.getenv("SALESFORCE_PASSWORD")
+SF_TOKEN    = os.getenv("SALESFORCE_TOKEN")
+SF_INSTANCE = os.getenv("SALESFORCE_INSTANCE")
+
+if not all([SF_USERNAME, SF_PASSWORD, SF_TOKEN, SF_INSTANCE]):
+    raise ValueError("❌ Missing one or more Salesforce environment variables in .env file")
+
+# --- Secure Salesforce login ---
 sf = Salesforce(
-    username='samuelcooper@ndspro.com',
-    password='Summer@NDS2025',
-    security_token='zjU2IJAfQmx6zDxgOj3aLkyPQ',
-    instance_url='https://nds.my.salesforce.com'
+    username=SF_USERNAME,
+    password=SF_PASSWORD,
+    security_token=SF_TOKEN,
+    instance_url=SF_INSTANCE
 )
 
 # --- Workbook setup ---
@@ -324,4 +336,3 @@ try:
 
 except KeyboardInterrupt:
     print("\n" + Style.BRIGHT + "Script stopped by user.")
-

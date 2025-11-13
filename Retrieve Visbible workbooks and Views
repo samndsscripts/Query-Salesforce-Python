@@ -1,0 +1,30 @@
+import os
+from dotenv import load_dotenv
+import tableauserverclient as TSC
+
+# Load the tableau.env file
+dotenv_path = os.path.join(os.path.dirname(__file__), "tableau.env")
+load_dotenv(dotenv_path)
+
+TABLEAU_SERVER = os.environ.get("TABLEAU_SERVER")
+TABLEAU_PAT_NAME = os.environ.get("TABLEAU_PAT_NAME")
+TABLEAU_PAT_SECRET = os.environ.get("TABLEAU_PAT_SECRET")
+TABLEAU_SITE = os.environ.get("TABLEAU_SITE_CONTENTURL", "")
+
+# Authenticate
+tableau_auth = TSC.PersonalAccessTokenAuth(TABLEAU_PAT_NAME, TABLEAU_PAT_SECRET, site_id=TABLEAU_SITE)
+server = TSC.Server(TABLEAU_SERVER, use_server_version=True, http_options={"verify": False})
+
+with server.auth.sign_in(tableau_auth):
+    # Get all workbooks
+    all_workbooks, pagination_item = server.workbooks.get()
+    print(f"Total workbooks on site: {pagination_item.total_available}\n")
+
+    # Print workbook names and LUIDs
+    for wb in all_workbooks:
+        print(f"Workbook: {wb.name}, LUID: {wb.id}")
+
+        # Populate views for each workbook
+        server.workbooks.populate_views(wb)
+        for v in wb.views:
+            print(f"  View: {v.name}, LUID: {v.id}")

@@ -1,0 +1,60 @@
+import os
+from dotenv import load_dotenv
+import pandas as pd
+from io import StringIO
+import tableauserverclient as TSC
+
+# Load the tableau.env file
+dotenv_path = os.path.join(os.path.dirname(__file__), "tableau.env")
+load_dotenv(dotenv_path)
+
+TABLEAU_SERVER = os.environ.get("TABLEAU_SERVER")
+TABLEAU_PAT_NAME = os.environ.get("TABLEAU_PAT_NAME")
+TABLEAU_PAT_SECRET = os.environ.get("TABLEAU_PAT_SECRET")
+TABLEAU_SITE = os.environ.get("TABLEAU_SITE_CONTENTURL", "")
+
+def main():
+    # Sign in
+    tableau_auth = TSC.PersonalAccessTokenAuth(TABLEAU_PAT_NAME, TABLEAU_PAT_SECRET, site_id=TABLEAU_SITE)
+    server = TSC.Server(TABLEAU_SERVER, use_server_version=True)
+
+    with server.auth.sign_in(tableau_auth):
+        # Get all workbooks
+        all_workbooks, _ = server.workbooks.get()
+        print(f"Found {len(all_workbooks)} workbooks on site.")
+
+        # Find the specific workbook
+        shipped_workbook = next((wb for wb in all_workbooks if wb.name == "Open AND Shipped Orders"), None)
+        if not shipped_workbook:
+            print("Workbook not found.")
+            return
+
+        # Populate views
+        server.workbooks.populate_views(shipped_workbook)
+
+        # Find the shipped orders view
+        shipped_view = next((v for v in shipped_workbook.views if v.name == "Shipped Orders Detail"), None)
+        if not shipped_view:
+            print("Shipped Orders Detail view not found.")
+            return
+
+        # Populate CSV into the view object
+        server.views.populate_csv(shipped_view)
+
+        # shipped_view.csv is now a generator of lines
+        csv_lines = shipped_view.csv
+        csv_text = "\n".join([line.decode("utf-8") if isinstance(line, bytes) else line for line in csv_lines])
+
+        # Convert CSV text to DataFrame
+        df = pd.read_csv(StringIO(csv_text))
+
+        # Save full CSV to Excel-readable file
+        output_file = os.path.join(os.path.dirname(__file__), "Shipped_Orders.csv")
+        df.to_csv(output_file, index=False)
+        print(f"CSV saved to {output_file}")
+
+        # Print first 100 rows
+        print(df.head(100))
+
+if __name__ == "__main__":
+    main()

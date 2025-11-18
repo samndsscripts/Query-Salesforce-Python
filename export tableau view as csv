@@ -1,0 +1,115 @@
+import os
+from dotenv import load_dotenv
+import tableauserverclient as TSC
+from tabcmd.execution.logger_config import log
+from tabcmd.commands.constants import Errors
+from datasources_workbooks_views_url_parser import DatasourcesWorkbooksAndViewsUrlParser
+from datasources_and_workbooks_command import DatasourcesAndWorkbooks
+
+# -------------------- Session -------------------- #
+class Session:
+    TOKEN_CRED_TYPE = "token"
+
+    def __init__(self):
+        self.tableau_server = None
+        self.server_url = None
+        self.token_name = None
+        self.token_value = None
+        self.site_name = None
+        self.user_id = None
+        self.auth_token = None
+        self.last_login_using = None
+
+        self.logger = log(__name__, "info")
+
+        env_path = os.path.join(os.path.dirname(__file__), "tableau.env")
+        load_dotenv(env_path)
+        self.env_server = os.getenv("TABLEAU_SERVER")
+        self.env_token_name = os.getenv("TABLEAU_PAT_NAME")
+        self.env_token_value = os.getenv("TABLEAU_PAT_SECRET")
+        self.env_site_name = os.getenv("TABLEAU_SITE", "")
+
+    def _open_connection(self):
+        if not self.server_url:
+            Errors.exit_with_error(self.logger, "Server URL is required")
+        try:
+            self.tableau_server = TSC.Server(self.server_url, use_server_version=True)
+        except Exception as e:
+            Errors.exit_with_error(self.logger, "Failed to connect to server", e)
+
+    def sign_in(self, server_url=None, token_name=None, token_value=None, site_name=None):
+        self.server_url = server_url or self.env_server
+        self.token_name = token_name or self.env_token_name
+        self.token_value = token_value or self.env_token_value
+        self.site_name = site_name or self.env_site_name
+
+        if not (self.token_name and self.token_value):
+            Errors.exit_with_error(self.logger, "Token name and token value are required")
+
+        self._open_connection()
+        auth = TSC.PersonalAccessTokenAuth(self.token_name, self.token_value, site_id=self.site_name)
+        self.last_login_using = "token"
+
+        try:
+            self.tableau_server.auth.sign_in(auth)
+            self.user_id = self.tableau_server.user_id
+            self.auth_token = self.tableau_server._auth_token
+            print(f"✅ Signed in to {self.server_url} as {self.token_name}")
+            return self.tableau_server
+        except Exception as e:
+            Errors.exit_with_error(self.logger, "Sign in failed", e)
+
+    def sign_out(self):
+        if self.tableau_server:
+            try:
+                self.tableau_server.auth.sign_out()
+                print("✅ Signed out successfully")
+            except Exception as e:
+                print(f"⚠️ Sign out failed: {e}")
+
+# -------------------- Export CSV by URL (Normal Views Only) -------------------- #
+class ExportCSVByURL:
+    @staticmethod
+    def run(view_url, filename=None):
+        from tabcmd.execution.logger_config import log
+
+        logger = log("ExportCSVByURL", "info")
+
+        # Login using existing session (your login works)
+        session = Session()
+        server = session.sign_in()
+
+        try:
+            # Parse the view URL to get view content URL
+            # Ignore workbook and custom_view_id since this is normal view only
+            view_content_url, _, _, _ = DatasourcesWorkbooksAndViewsUrlParser.parse_export_url_to_workbook_view_and_custom_view(
+                logger, view_url
+            )
+
+            # Fetch the normal view
+            view_item = DatasourcesAndWorkbooks.get_view_by_content_url(logger, server, view_content_url)
+            if not view_item:
+                Errors.exit_with_error(logger, f"View not found with URL: {view_url}")
+
+            # Export CSV using TSC
+            server.views.populate_csv(view_item)
+
+            save_name = filename or f"{view_item.name}.csv"
+            with open(save_name, "wb") as f:
+                for chunk in view_item.csv:  # CSV bytes generator
+                    f.write(chunk)
+
+            print(f"✅ CSV exported to {save_name}")
+
+        except Exception as e:
+            Errors.exit_with_error(logger, f"Failed to export CSV: {e}")
+
+        # Sign out
+        session.sign_out()
+
+
+# -------------------- Example Usage -------------------- #
+if __name__ == "__main__":
+    view_url = "5_SalesReport1year/5_SKU"  # normal view
+    ExportCSVByURL.run(view_url)
+

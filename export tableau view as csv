@@ -1,13 +1,15 @@
 import os
 import io
-from dotenv import load_dotenv
 import pandas as pd
+import xlwings as xw
+from dotenv import load_dotenv
 import tableauserverclient as TSC
 from tabcmd.execution.logger_config import log
 from tabcmd.commands.constants import Errors
 from datasources_workbooks_views_url_parser import DatasourcesWorkbooksAndViewsUrlParser
 from datasources_and_workbooks_command import DatasourcesAndWorkbooks
 
+WB_PATH = r"C:\Users\emp35107\OneDrive - NORMA Group\Documents\PPMs.xlsx"
 
 # -------------------- Session -------------------- #
 class Session:
@@ -73,10 +75,13 @@ class Session:
 # -------------------- Export & Transform CSV -------------------- #
 class ExportAndTransformCSV:
     @staticmethod
-    def run(view_url, filename=None):
-        logger = log("ExportAndTransformCSV", "info")
+    def run(view_url, sheet_name="Shipment Data", table_name="shipment_data"):
+        # Excel setup
+        wb = xw.Book(WB_PATH)
+        sheet = wb.sheets[sheet_name]
+        table = sheet.tables[table_name]
 
-        # Sign in
+        logger = log("ExportAndTransformCSV", "info")
         session = Session()
         server = session.sign_in()
 
@@ -89,24 +94,17 @@ class ExportAndTransformCSV:
             # Fetch normal view
             view_item = DatasourcesAndWorkbooks.get_view_by_content_url(logger, server, view_content_url)
             if not view_item:
-                Errors.exit_with_error(logger, f"View not found with URL: {view_url}")
+                Errors.exit_with_error(logger, f"View not found: {view_url}")
 
-            # ✅ Populate the CSV into memory
+            # Populate CSV into memory
             server.views.populate_csv(view_item)
-
-            # Export CSV into memory
             csv_bytes = b''.join(view_item.csv)
             df = pd.read_csv(io.BytesIO(csv_bytes), low_memory=False)
 
             # -------------------- Transform -------------------- #
-            # Keep only rows with Measure Names = 'Ship Qty' or 'Order Qty'
             df = df[df["Measure Names"].isin(["Ship Qty", "Order Qty"])].copy()
-
-            # Convert Measure Values to numeric
             df["Measure Values"] = pd.to_numeric(df["Measure Values"], errors="coerce").fillna(0)
 
-            # Aggregate by Sales Order# + Stock Code (one row per order)
-            # QTY = abs(Ship Qty if >0, else Order Qty, else 0)
             def compute_qty(group):
                 ship = group.loc[group["Measure Names"] == "Ship Qty", "Measure Values"].sum()
                 order = group.loc[group["Measure Names"] == "Order Qty", "Measure Values"].sum()
@@ -115,24 +113,31 @@ class ExportAndTransformCSV:
             transformed = df.groupby(
                 ["Branch", "Customer", "Customer Name", "Sales Order#", "Stock Code", "Ship Date"],
                 as_index=False
-            ).apply(compute_qty)
+            ).apply(compute_qty).reset_index()
 
-            # Reset column names
-            transformed = transformed.reset_index()
             transformed.rename(columns={0: "QTY"}, inplace=True)
+            new_rows = transformed.values.tolist()
 
-            # Output filename
-            save_name = filename or f"{view_item.name}_transformed.csv"
-            transformed.to_csv(save_name, index=False)
-            print(f"✅ Transformed CSV saved as {save_name}")
+            # -------------------- Append inside Excel table -------------------- #
+            if table.data_body_range is None:
+                # Table is empty, write starting at first data row
+                first_data_cell = table.range.offset(1, 0)
+                first_data_cell.value = new_rows
+            else:
+                # Non-empty table, write below last row and expand table automatically
+                last_row = table.data_body_range.last_cell.row
+                first_col = table.range.column
+                sheet.range((last_row + 1, first_col)).value = new_rows
+
+            print(f"✅ Appended {len(new_rows)} rows to Excel table '{table_name}'")
 
         except Exception as e:
             Errors.exit_with_error(logger, f"Failed to export & transform CSV: {e}")
 
-        # Sign out
-        session.sign_out()
+        finally:
+            session.sign_out()
 
 # -------------------- Example Usage -------------------- #
 if __name__ == "__main__":
-    view_url = "OpenANDShippedOrders/ALLOrdersDetail"  # normal view
+    view_url = "OpenANDShippedOrders/ALLOrdersDetail"
     ExportAndTransformCSV.run(view_url)

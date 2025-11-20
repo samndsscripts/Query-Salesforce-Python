@@ -1,10 +1,13 @@
 import os
+import io
 from dotenv import load_dotenv
+import pandas as pd
 import tableauserverclient as TSC
 from tabcmd.execution.logger_config import log
 from tabcmd.commands.constants import Errors
 from datasources_workbooks_views_url_parser import DatasourcesWorkbooksAndViewsUrlParser
 from datasources_and_workbooks_command import DatasourcesAndWorkbooks
+
 
 # -------------------- Session -------------------- #
 class Session:
@@ -67,49 +70,69 @@ class Session:
             except Exception as e:
                 print(f"⚠️ Sign out failed: {e}")
 
-# -------------------- Export CSV by URL (Normal Views Only) -------------------- #
-class ExportCSVByURL:
+# -------------------- Export & Transform CSV -------------------- #
+class ExportAndTransformCSV:
     @staticmethod
     def run(view_url, filename=None):
-        from tabcmd.execution.logger_config import log
+        logger = log("ExportAndTransformCSV", "info")
 
-        logger = log("ExportCSVByURL", "info")
-
-        # Login using existing session (your login works)
+        # Sign in
         session = Session()
         server = session.sign_in()
 
         try:
-            # Parse the view URL to get view content URL
-            # Ignore workbook and custom_view_id since this is normal view only
+            # Parse view URL to get content URL
             view_content_url, _, _, _ = DatasourcesWorkbooksAndViewsUrlParser.parse_export_url_to_workbook_view_and_custom_view(
                 logger, view_url
             )
 
-            # Fetch the normal view
+            # Fetch normal view
             view_item = DatasourcesAndWorkbooks.get_view_by_content_url(logger, server, view_content_url)
             if not view_item:
                 Errors.exit_with_error(logger, f"View not found with URL: {view_url}")
 
-            # Export CSV using TSC
+            # ✅ Populate the CSV into memory
             server.views.populate_csv(view_item)
 
-            save_name = filename or f"{view_item.name}.csv"
-            with open(save_name, "wb") as f:
-                for chunk in view_item.csv:  # CSV bytes generator
-                    f.write(chunk)
+            # Export CSV into memory
+            csv_bytes = b''.join(view_item.csv)
+            df = pd.read_csv(io.BytesIO(csv_bytes), low_memory=False)
 
-            print(f"✅ CSV exported to {save_name}")
+            # -------------------- Transform -------------------- #
+            # Keep only rows with Measure Names = 'Ship Qty' or 'Order Qty'
+            df = df[df["Measure Names"].isin(["Ship Qty", "Order Qty"])].copy()
+
+            # Convert Measure Values to numeric
+            df["Measure Values"] = pd.to_numeric(df["Measure Values"], errors="coerce").fillna(0)
+
+            # Aggregate by Sales Order# + Stock Code (one row per order)
+            # QTY = abs(Ship Qty if >0, else Order Qty, else 0)
+            def compute_qty(group):
+                ship = group.loc[group["Measure Names"] == "Ship Qty", "Measure Values"].sum()
+                order = group.loc[group["Measure Names"] == "Order Qty", "Measure Values"].sum()
+                return abs(ship if ship > 0 else order)
+
+            transformed = df.groupby(
+                ["Branch", "Customer", "Customer Name", "Sales Order#", "Stock Code", "Ship Date"],
+                as_index=False
+            ).apply(compute_qty)
+
+            # Reset column names
+            transformed = transformed.reset_index()
+            transformed.rename(columns={0: "QTY"}, inplace=True)
+
+            # Output filename
+            save_name = filename or f"{view_item.name}_transformed.csv"
+            transformed.to_csv(save_name, index=False)
+            print(f"✅ Transformed CSV saved as {save_name}")
 
         except Exception as e:
-            Errors.exit_with_error(logger, f"Failed to export CSV: {e}")
+            Errors.exit_with_error(logger, f"Failed to export & transform CSV: {e}")
 
         # Sign out
         session.sign_out()
 
-
 # -------------------- Example Usage -------------------- #
 if __name__ == "__main__":
-    view_url = "5_SalesReport1year/5_SKU"  # normal view
-    ExportCSVByURL.run(view_url)
-
+    view_url = "OpenANDShippedOrders/ALLOrdersDetail"  # normal view
+    ExportAndTransformCSV.run(view_url)

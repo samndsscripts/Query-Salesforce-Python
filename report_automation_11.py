@@ -36,8 +36,8 @@ sf = Salesforce(
 WB_PATH = r"C:\Users\emp35107\OneDrive - NORMA Group\Documents\PPMs.xlsx"
 wb = xw.Book(WB_PATH)
 sheet_sup = wb.sheets['Class Site Supplier']
-sheet_out = wb.sheets['test']
-table_out = sheet_out.tables['test']
+sheet_out = wb.sheets['RMA Raw']
+table_out = sheet_out.tables['RMA_Raw']
 
 # --- Load supplier data ---
 table_range = sheet_sup.tables['Table3'].range
@@ -154,7 +154,7 @@ def determine_source_from_comments(comment_text, stock_code_list, supplier_list,
 
 # --- Main Loop ---
 REPORT_ID = "00OUI00000EsGR72AN"
-CYCLE_SECONDS = 60
+CYCLE_SECONDS = 1800
 SOQL_BATCH = 100
 
 try:
@@ -348,4 +348,3 @@ try:
 
 except KeyboardInterrupt:
     print("\n" + Style.BRIGHT + "Script stopped by user.")
-

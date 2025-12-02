@@ -154,7 +154,7 @@ def determine_source_from_comments(comment_text, stock_code_list, supplier_list,
 
 # --- Main Loop ---
 REPORT_ID = "00OUI00000EsGR72AN"
-CYCLE_SECONDS = 1800
+CYCLE_SECONDS = 1800  # 30 minutes
 SOQL_BATCH = 100
 
 try:
@@ -211,7 +211,6 @@ try:
             """
             try:
                 result_titles = sf.query_all(soql_titles)
-
                 if result_titles is None:
                     print(Fore.YELLOW + f"⚠️ Title query returned None for batch: {batch[:5]}...")
                     continue
@@ -332,19 +331,19 @@ try:
         else:
             print(Fore.YELLOW + "No valid new rows to add this cycle.")
 
-        # Sleep with real-time elapsed display
-        for i in range(CYCLE_SECONDS):
-            elapsed_seconds = int(time.time() - cycle_start_time)
-            hours, remainder = divmod(elapsed_seconds, 3600)
-            minutes, seconds = divmod(remainder, 60)
-            elapsed_str = f"{hours:02}:{minutes:02}:{seconds:02}"
+        # --- Adaptive countdown until next cycle ---
+        elapsed = time.time() - cycle_start_time
+        remaining_seconds = max(0, CYCLE_SECONDS - int(elapsed))
 
+        for sec in range(remaining_seconds, 0, -1):
+            hours, remainder = divmod(sec, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            countdown_str = f"{hours:02}:{minutes:02}:{seconds:02}"
             clear_console()
-            print(f"🔄 Checking for new Salesforce cases... (Time elapsed: {elapsed_str})\n")
-            print(f"Found {len(new_case_numbers)} new case(s).")
-            if not new_case_numbers:
-                print(f"No new cases.")
+            print(f"🔄 Checking Salesforce cases... (Last cycle duration: {int(elapsed)} sec)\n")
+            print(f"⏳ Time until next check (hibernation countdown): {countdown_str}")
             time.sleep(1)
 
 except KeyboardInterrupt:
     print("\n" + Style.BRIGHT + "Script stopped by user.")
+

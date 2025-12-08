@@ -1,0 +1,169 @@
+import os
+import pandas as pd
+import xlwings as xw
+from datetime import datetime
+import zipfile
+import hashlib
+
+DOWNLOAD_DIR = r"C:\Users\emp35107\Downloads\TableauReports"
+WB_PATH = r"C:\Users\emp35107\OneDrive - NORMA Group\Documents\PPMs.xlsx"
+
+# Open Excel workbook and table
+wb = xw.Book(WB_PATH)
+sheet = wb.sheets['Shipment Data']
+table = sheet.tables['shipment_data']
+
+# Month mapping
+MONTH_MAP = {
+    'January': 1, 'February': 2, 'March': 3, 'April': 4,
+    'May': 5, 'June': 6, 'July': 7, 'August': 8,
+    'September': 9, 'October': 10, 'November': 11, 'December': 12
+}
+
+def get_latest_csv(path):
+    files = [f for f in os.listdir(path) if f.endswith(".csv")]
+    if not files:
+        print("No CSV files found.")
+        return None
+    files = [os.path.join(path, f) for f in files]
+    return max(files, key=os.path.getmtime)
+
+def generate_ident(row):
+    combined = (
+        str(row["Sales Order"]) +
+        str(row["Stock Code"]) +
+        str(row["Mfg Plant Name"]) +
+        str(row["Order Qty"]) +
+        str(row["Year of Req Ship Date"]) +
+        str(row["Month_Num"])
+    )
+    return hashlib.md5(combined.encode()).hexdigest()[:10]  # 10-character hash
+
+def process_csv():
+    csv_file = get_latest_csv(DOWNLOAD_DIR)
+    if not csv_file:
+        return
+
+    file_timestamp = datetime.fromtimestamp(os.path.getmtime(csv_file)).strftime("%Y-%m-%d %H:%M:%S")
+    print(f"\nProcessing: {csv_file} (Last modified: {file_timestamp})")
+
+    # ------------------ Load CSV ------------------ #
+    df = pd.read_csv(csv_file)
+    df.columns = df.columns.str.strip()  # Remove spaces
+
+    # ------------------ Keep required columns ------------------ #
+    required_columns = [
+        "Sales Order",
+        "Year of Req Ship Date",
+        "Month of Req Ship Date",
+        "Category",
+        "Stock Code",
+        "Mfg Plant Name",
+        "Order Qty"
+    ]
+    df = df[required_columns].copy()
+
+    # ------------------ Clean & Standardize ------------------ #
+    df["Sales Order"] = df["Sales Order"].astype(str).str.lstrip("0").str.strip().str.upper()
+    df["Stock Code"] = df["Stock Code"].astype(str).str.strip().str.upper()
+    df["Mfg Plant Name"] = df["Mfg Plant Name"].astype(str).str.strip().str.upper()
+    df["Order Qty"] = pd.to_numeric(df["Order Qty"], errors="coerce").fillna(0).astype(int)
+    df["Category"] = df["Category"].astype(str).str.strip()
+    df['Month_Num'] = df['Month of Req Ship Date'].str.strip().map(MONTH_MAP)
+
+    # ------------------ Filter last two months ------------------ #
+    current_year = datetime.now().year
+    current_month = datetime.now().month
+    last_two_months = [current_month, current_month - 1 if current_month > 1 else 12]
+
+    df = df[
+        (df["Year of Req Ship Date"].astype(int) == current_year) &
+        (df["Month_Num"].isin(last_two_months)) &
+        (df["Sales Order"].astype(str).str.strip() != "")
+    ]
+
+    if df.empty:
+        print(f"No rows for the last two months ({last_two_months}) of {current_year}.")
+        return
+
+    # ------------------ Generate Ident ------------------ #
+    df['Ident'] = df.apply(generate_ident, axis=1)
+
+    # ------------------ Read existing Excel Ident ------------------ #
+    table_range = table.range
+    if table_range and table_range.value:
+        header = table_range.value[0]
+        body = table_range.value[1:] if len(table_range.value) > 1 else []
+        excel_df = pd.DataFrame(body, columns=header)
+        excel_df = excel_df.fillna('')
+        existing_ident_list = excel_df['Ident'].astype(str).tolist() if 'Ident' in excel_df.columns else []
+    else:
+        existing_ident_list = []
+
+    # ------------------ Filter new rows ------------------ #
+    new_rows = df[~df["Ident"].isin(existing_ident_list)]
+    if new_rows.empty:
+        print("No new rows to append after filtering existing Idents.")
+        return
+
+    # ------------------ Prepare final DataFrame ------------------ #
+    new_rows['TimeStamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Rename columns to match desired output
+    df_final = new_rows.rename(columns={
+        "Sales Order": "Sales Order #",
+        "Year of Req Ship Date": "Ship Year",
+        "Month of Req Ship Date": "Ship Month"
+    })
+
+    # Reorder columns exactly as needed
+    df_final = df_final[[
+        'Ident',
+        'Sales Order #',
+        'Ship Year',
+        'Ship Month',
+        'Category',
+        'Stock Code',
+        'Mfg Plant Name',
+        'Order Qty',
+        'TimeStamp'
+    ]]
+
+    # Convert to string and prepare for Excel
+    data_to_write = df_final.fillna('').astype(str).values.tolist()
+
+    # Determine first row to write
+    if table.data_body_range:
+        first_row = table.data_body_range.last_cell.row + 1
+    else:
+        first_row = table.range.row + 1
+    start_col = table.range.column
+
+    # ------------------ Write in batches ------------------ #
+    batch_size = 50000
+    for i in range(0, len(data_to_write), batch_size):
+        batch = data_to_write[i:i + batch_size]
+
+        # Debug print
+        for row in batch:
+            print(f"Order Number: {row[1]}  |  Ident: {row[0]}")
+
+        sheet.range((first_row + i, start_col)).value = batch
+        print(f"Wrote rows {first_row + i} to {first_row + i + len(batch) - 1}")
+
+    print(f"{len(data_to_write)} new rows appended for the last two months of {current_year}.")
+
+    # ------------------ Archive CSV ------------------ #
+    processed_dir = os.path.join(DOWNLOAD_DIR, "processed")
+    os.makedirs(processed_dir, exist_ok=True)
+    zip_filename = os.path.join(
+        processed_dir,
+        f"{os.path.basename(csv_file).replace('.csv','')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+    )
+    with zipfile.ZipFile(zip_filename, "w", zipfile.ZIP_DEFLATED) as zipf:
+        zipf.write(csv_file, os.path.basename(csv_file))
+    os.remove(csv_file)
+    print(f"Archived and removed CSV: {zip_filename}")
+
+if __name__ == "__main__":
+    process_csv()

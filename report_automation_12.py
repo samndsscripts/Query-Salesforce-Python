@@ -188,13 +188,6 @@ def determine_source_from_comments(comment_text, stock_code_list, supplier_list,
 
     return source, top_matches, bought_out
 
-#Build Hyperlink
-def build_case_hyperlink(case_number, case_id, instance_url):
-    if not case_id:
-        return case_number
-    return f'=HYPERLINK("{SF_INSTANCE}/lightning/r/Case/{case_id}/view","{cn_int}")'
-
-
 # --- Load existing RMA_Raw table safely ---
 RMA_table = sheet_out.tables['RMA_Raw']
 
@@ -337,13 +330,19 @@ try:
                 year_int = dt.year
                 month_int = dt.month
 
+                case_id = rec["Id"]
+                case_number = cn_int
+
+                hyperlink = hyperlink = case_number
+
+
                 new_row = [
                     opened_date_formatted,
                     year_int,
                     month_int,
                     rec.get('Reason', ''),
                     rec.get('Owner', {}).get('Name', ''),
-                    f'=HYPERLINK("{SF_INSTANCE}/lightning/r/Case/{rec["Id"]}/view","{cn_int}")',
+                    hyperlink,
                     description,
                     comments_map.get(rec['Id'], ''),
                     qty or '',
@@ -370,14 +369,26 @@ try:
                 start_row = (RMA_table.data_body_range.last_cell.row + 1
                             if RMA_table.data_body_range else RMA_table.range.row + 1)
                 start_col = RMA_table.range.column
-                sheet_out.range((start_row, start_col)).value = new_rows_to_add
-                print(Fore.GREEN + f"\n✅ Added {len(new_rows_to_add)} new row(s) to Excel.\n")
-            else:
-                print(Fore.YELLOW + "No new rows to add. All cases already exist in Excel.")
 
-            print(Fore.CYAN + "ℹ️ Quantity source tally:")
-            for k, v in qty_tally.items():
-                print(f"  {k}: {v} case(s)")
+                # Write rows
+                sheet_out.range((start_row, start_col)).value = new_rows_to_add
+
+                # --- Convert Case Number column to real hyperlinks ---
+                rma_headers = RMA_table.header_row_range.value
+                link_col_idx = rma_headers.index("Case Number") + 1  # Excel column index (1-based)
+
+                # starting row of new rows
+                start_row_hyperlink = start_row
+
+                for i, rec_row in enumerate(new_rows_to_add):
+                    cell = sheet_out.cells(start_row_hyperlink + i, start_col + link_col_idx - 1)
+                    case_id = records[i]['Id']  # use the actual Salesforce Id
+                    case_number = rec_row[link_col_idx - 1]  # value in that cell (currently just the number)
+                    cell.api.Hyperlinks.Add(
+                        Anchor=cell.api,
+                        Address=f"{SF_INSTANCE}/lightning/r/Case/{case_id}/view",
+                        TextToDisplay=str(case_number)
+                    )
 
             # --- Countdown until next cycle ---
             elapsed = time.time() - cycle_start_time

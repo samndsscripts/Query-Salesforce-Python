@@ -1,4 +1,4 @@
-import os
+import os 
 import pandas as pd
 import xlwings as xw
 from datetime import datetime
@@ -28,16 +28,31 @@ def get_latest_csv(path):
     files = [os.path.join(path, f) for f in files]
     return max(files, key=os.path.getmtime)
 
+def clean_val(val):
+    """Normalize string/numeric values consistently"""
+    if pd.isna(val):
+        return ''
+    val = str(val).replace('\xa0','').replace('\t','').strip().upper()
+    # If numeric, convert floats that are whole numbers to int strings
+    try:
+        f = float(val)
+        if f.is_integer():
+            val = str(int(f))
+    except:
+        pass
+    return val
+
 def generate_ident(row):
-    combined = (
-        str(row["Sales Order"]) +
-        str(row["Stock Code"]) +
-        str(row["Mfg Plant Name"]) +
-        str(row["Order Qty"]) +
-        str(row["Year of Req Ship Date"]) +
-        str(row["Month_Num"])
+    return (
+        clean_val(row.get("Sales Order")) + '|' +
+        clean_val(row.get("Stock Code")) + '|' +
+        clean_val(row.get("Mfg Plant Name")) + '|' +
+        clean_val(row.get("Order Qty")) + '|' +
+        clean_val(row.get("Ship Year")) + '|' +
+        clean_val(row.get("Ship Month"))
     )
-    return hashlib.md5(combined.encode()).hexdigest()[:10]  # 10-character hash
+
+
 
 def process_csv():
     csv_file = get_latest_csv(DOWNLOAD_DIR)
@@ -53,37 +68,35 @@ def process_csv():
 
     # ------------------ Keep required columns ------------------ #
     required_columns = [
-        "Sales Order",
-        "Year of Req Ship Date",
-        "Month of Req Ship Date",
-        "Category",
-        "Stock Code",
-        "Mfg Plant Name",
-        "Order Qty"
+    "Sales Order",
+    "Month, Day, Year of Req Ship Date",  # new date column
+    "Category",
+    "Stock Code",
+    "Mfg Plant Name",
+    "Order Qty"
     ]
-    df = df[required_columns].copy()
+
+    df = df[[col for col in required_columns if col in df.columns]].copy()
 
     # ------------------ Clean & Standardize ------------------ #
-    df["Sales Order"] = df["Sales Order"].astype(str).str.lstrip("0").str.strip().str.upper()
+    df["Sales Order"] = df["Sales Order"].fillna('').astype(str).str.lstrip("0").str.strip().str.upper()
     df["Stock Code"] = df["Stock Code"].astype(str).str.strip().str.upper()
     df["Mfg Plant Name"] = df["Mfg Plant Name"].astype(str).str.strip().str.upper()
     df["Order Qty"] = pd.to_numeric(df["Order Qty"], errors="coerce").fillna(0).astype(int)
     df["Category"] = df["Category"].astype(str).str.strip()
-    df['Month_Num'] = df['Month of Req Ship Date'].str.strip().map(MONTH_MAP)
 
-    # ------------------ Filter last two months ------------------ #
-    current_year = datetime.now().year
-    current_month = datetime.now().month
-    last_two_months = [current_month, current_month - 1 if current_month > 1 else 12]
+    # ------------------ Convert Ship Date to Year/Month & formatted string ------------------ #
+    df['Ship Date'] = pd.to_datetime(df['Month, Day, Year of Req Ship Date'], errors='coerce')
+    df['Ship Year'] = df['Ship Date'].dt.year
+    df['Ship Month'] = df['Ship Date'].dt.month
+    df['Ship Date Formatted'] = df['Ship Date'].dt.strftime('%m/%d/%Y')
 
-    df = df[
-        (df["Year of Req Ship Date"].astype(int) == current_year) &
-        (df["Month_Num"].isin(last_two_months)) &
-        (df["Sales Order"].astype(str).str.strip() != "")
-    ]
+
+    # ------------------ Keep only valid Sales Orders ------------------ #
+    df = df[df["Sales Order"].astype(str).str.strip() != ""]
 
     if df.empty:
-        print(f"No rows for the last two months ({last_two_months}) of {current_year}.")
+        print("No valid rows found in CSV.")
         return
 
     # ------------------ Generate Ident ------------------ #
@@ -96,7 +109,7 @@ def process_csv():
         body = table_range.value[1:] if len(table_range.value) > 1 else []
         excel_df = pd.DataFrame(body, columns=header)
         excel_df = excel_df.fillna('')
-        existing_ident_list = excel_df['Ident'].astype(str).tolist() if 'Ident' in excel_df.columns else []
+        existing_ident_list = [str(i).replace('\xa0','').strip() for i in excel_df['Ident'].astype(str).tolist()] if 'Ident' in excel_df.columns else []
     else:
         existing_ident_list = []
 
@@ -109,24 +122,27 @@ def process_csv():
     # ------------------ Prepare final DataFrame ------------------ #
     new_rows['TimeStamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # Rename columns to match desired output
-    df_final = new_rows.rename(columns={
+    # Rename columns to match Excel output
+    new_rows = new_rows.rename(columns={
         "Sales Order": "Sales Order #",
-        "Year of Req Ship Date": "Ship Year",
-        "Month of Req Ship Date": "Ship Month"
+        "Ship Date Formatted": "Date Shipped",
+        "Ship Year": "Year",
+        "Ship Month": "Month"
     })
 
+
     # Reorder columns exactly as needed
-    df_final = df_final[[
-        'Ident',
-        'Sales Order #',
-        'Ship Year',
-        'Ship Month',
-        'Category',
-        'Stock Code',
-        'Mfg Plant Name',
-        'Order Qty',
-        'TimeStamp'
+    df_final = new_rows[[
+    'Ident',
+    'Sales Order #',
+    'Date Shipped',  # formatted MM/DD/YYYY
+    'Year',          # numeric
+    'Month',         # numeric
+    'Category',
+    'Stock Code',
+    'Mfg Plant Name',
+    'Order Qty',
+    'TimeStamp'
     ]]
 
     # Convert to string and prepare for Excel
@@ -151,7 +167,7 @@ def process_csv():
         sheet.range((first_row + i, start_col)).value = batch
         print(f"Wrote rows {first_row + i} to {first_row + i + len(batch) - 1}")
 
-    print(f"{len(data_to_write)} new rows appended for the last two months of {current_year}.")
+    print(f"{len(data_to_write)} new rows appended to Excel.")
 
     # ------------------ Archive CSV ------------------ #
     processed_dir = os.path.join(DOWNLOAD_DIR, "processed")

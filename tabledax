@@ -6,40 +6,15 @@ UNION(
         "Category", RMA_Raw[Category],
         "Bought Out", IF(VALUE(RMA_Raw[Bought Part]) = 1, "Bought Out", "Made In"),
         "Quantity", INT(RMA_Raw[Quantity]),
-        "Date", RMA_Raw[Opened Date].[Date],
-
-        /* ✅ DATE-DERIVED COLUMNS */
-        "Year", YEAR(RMA_Raw[Opened Date].[Date]),
-        "Month Num", MONTH(RMA_Raw[Opened Date].[Date]),
-        "Month Name", FORMAT(RMA_Raw[Opened Date].[Date], "MMM"),
-        "Year-Month", FORMAT(RMA_Raw[Opened Date].[Date], "YYYY-MM"),
-        "YearMonthKey",
-            YEAR(RMA_Raw[Opened Date].[Date]) * 100
-            + MONTH(RMA_Raw[Opened Date].[Date]),
-
-        "Quarter", "Q" & FORMAT(RMA_Raw[Opened Date].[Date], "Q"),
-        "Year-Quarter",
-            FORMAT(RMA_Raw[Opened Date].[Date], "YYYY")
-            & " Q"
-            & FORMAT(RMA_Raw[Opened Date].[Date], "Q"),
-        "YearQuarterKey",
-            YEAR(RMA_Raw[Opened Date].[Date]) * 10
-            + FORMAT(RMA_Raw[Opened Date].[Date], "Q"),
-
-        "Week Num", WEEKNUM(RMA_Raw[Opened Date].[Date], 2),
-        "Year-Week",
-            FORMAT(RMA_Raw[Opened Date].[Date], "YYYY")
-            & "-W"
-            & FORMAT(WEEKNUM(RMA_Raw[Opened Date].[Date], 2), "00"),
-        "YearWeekKey",
-            YEAR(RMA_Raw[Opened Date].[Date]) * 100
-            + WEEKNUM(RMA_Raw[Opened Date].[Date], 2),
-
+        "Date", DATEVALUE(RMA_Raw[Opened Date]),
         "Type", "RMA",
         "Case Reason", RMA_Raw[Case Reason],
         "Stock Code", RMA_Raw[Stock Code],
         "RMA Value", RMA_Raw[RMA Value],
-        "Shipping Whse", RMA_Raw[Shipping Whse]
+        "Shipping Whse", RMA_Raw[Shipping Whse],
+        "Case Number", RMA_Raw[Case Number],
+        "Comments", RMA_Raw[Comments],
+        "Account Name", RMA_Raw[Account Name]
     ),
 
     SELECTCOLUMNS(
@@ -48,81 +23,31 @@ UNION(
         "Category", shipment_data[Category],
         "Bought Out", IF(VALUE(shipment_data[Bought Out]) = 1, "Bought Out", "Made In"),
         "Quantity", INT(shipment_data[Order Qty]),
-        "Date", shipment_data[Date Shipped].[Date],
-
-        /* ✅ DATE-DERIVED COLUMNS */
-        "Year", YEAR(shipment_data[Date Shipped].[Date]),
-        "Month Num", MONTH(shipment_data[Date Shipped].[Date]),
-        "Month Name", FORMAT(shipment_data[Date Shipped].[Date], "MMM"),
-        "Year-Month", FORMAT(shipment_data[Date Shipped].[Date], "YYYY-MM"),
-        "YearMonthKey",
-            YEAR(shipment_data[Date Shipped].[Date]) * 100
-            + MONTH(shipment_data[Date Shipped].[Date]),
-
-        "Quarter", "Q" & FORMAT(shipment_data[Date Shipped].[Date], "Q"),
-        "Year-Quarter",
-            FORMAT(shipment_data[Date Shipped].[Date], "YYYY")
-            & " Q"
-            & FORMAT(shipment_data[Date Shipped].[Date], "Q"),
-        "YearQuarterKey",
-            YEAR(shipment_data[Date Shipped].[Date]) * 10
-            + FORMAT(shipment_data[Date Shipped].[Date], "Q"),
-
-        "Week Num", WEEKNUM(shipment_data[Date Shipped].[Date], 2),
-        "Year-Week",
-            FORMAT(shipment_data[Date Shipped].[Date], "YYYY")
-            & "-W"
-            & FORMAT(WEEKNUM(shipment_data[Date Shipped].[Date], 2), "00"),
-        "YearWeekKey",
-            YEAR(shipment_data[Date Shipped].[Date]) * 100
-            + WEEKNUM(shipment_data[Date Shipped].[Date], 2),
-
+        "Date", DATEVALUE(shipment_data[Date Shipped]),
         "Type", "Shipment",
         "Case Reason", BLANK(),
         "Stock Code", shipment_data[Stock Code],
         "RMA Value", BLANK(),
-        "Shipping Whse", BLANK()
+        "Shipping Whse", BLANK(),
+        "Case Number", BLANK(),
+        "Comments", BLANK(),
+        "Account Name", BLANK()
     ),
+
     SELECTCOLUMNS(
         Log1,
         "Source", "LITHIA SPRINGS",
         "Category", Log1[Category],
-        "Bought Out","Made In",
+        "Bought Out", "Made In",
         "Quantity", INT(Log1[Quantity]),
-        "Date", Log1[Date].[Date],
-
-        /* ✅ DATE-DERIVED COLUMNS */
-        "Year", YEAR(Log1[Date].[Date]),
-        "Month Num", MONTH(Log1[Date].[Date]),
-        "Month Name", FORMAT(Log1[Date].[Date], "MMM"),
-        "Year-Month", FORMAT(Log1[Date].[Date], "YYYY-MM"),
-        "YearMonthKey",
-            YEAR(Log1[Date].[Date]) * 100
-            + MONTH(Log1[Date].[Date]),
-
-        "Quarter", "Q" & FORMAT(Log1[Date].[Date], "Q"),
-        "Year-Quarter",
-            FORMAT(Log1[Date].[Date], "YYYY")
-            & " Q"
-            & FORMAT(Log1[Date].[Date], "Q"),
-        "YearQuarterKey",
-            YEAR(Log1[Date].[Date]) * 10
-            + FORMAT(Log1[Date].[Date], "Q"),
-
-        "Week Num", WEEKNUM(Log1[Date].[Date], 2),
-        "Year-Week",
-            FORMAT(Log1[Date].[Date], "YYYY")
-            & "-W"
-            & FORMAT(WEEKNUM(Log1[Date].[Date], 2), "00"),
-        "YearWeekKey",
-            YEAR(Log1[Date].[Date]) * 100
-            + WEEKNUM(Log1[Date].[Date], 2),
-
-        "Type", "log",
+        "Date", DATEVALUE(Log1[Date]),
+        "Type", "Log",
         "Case Reason", Log1[General Concern],
         "Stock Code", Log1[Part Number],
         "RMA Value", BLANK(),
-        "Shipping Whse", BLANK()
+        "Shipping Whse", BLANK(),
+        "Case Number", BLANK(),
+        "Comments", BLANK(),
+        "Account Name", BLANK()
     )
 )
-

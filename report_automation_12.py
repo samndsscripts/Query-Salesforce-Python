@@ -7,6 +7,7 @@ from rapidfuzz import process
 from simple_salesforce import Salesforce
 from datetime import datetime
 from datetime import date
+from datetime import timezone
 from colorama import init as colorama_init, Fore, Style
 from collections import Counter
 from dotenv import load_dotenv  # <-- NEW import
@@ -230,9 +231,11 @@ try:
 
         # --- Rolling 12 months start date ---
         today = datetime.utcnow()
+
+        # Add back
         one_year_ago = today - pd.DateOffset(months=12)
         start_date = one_year_ago.strftime("%Y-%m-%dT%H:%M:%SZ")
-
+        
         print("🔄 Pulling Salesforce RMA cases from last 12 months with PROD reasons...\n")
 
         try:
@@ -301,14 +304,15 @@ try:
                 if top_matches and "Stock Code:" in top_matches[0]:
                     matched_stock_code = top_matches[0].split("|")[0].replace("Stock Code:", "").strip()
 
-                # Determine category
-                category = ''
                 if matched_stock_code:
                     try:
                         idx = stock_codes_list.index(matched_stock_code)
-                        category = category_list[idx]
+                        category = category_list[idx] or "Unidentified"
                     except ValueError:
-                        category = ''
+                        category = "Unidentified"
+                else:
+                    category = "Unidentified"
+
 
                 qty = title_qty
                 qty_source = "title_qty"
@@ -333,7 +337,7 @@ try:
                 case_id = rec["Id"]
                 case_number = cn_int
 
-                hyperlink = hyperlink = case_number
+                hyperlink = case_number
 
 
                 new_row = [
@@ -361,34 +365,36 @@ try:
                     matched_stock_code,
                     "YES"
                 ]
-                new_rows_to_add.append(new_row)
+                new_rows_to_add.append({
+                "row": new_row,
+                "case_id": case_id,
+                "case_number": case_number
+                })
+
                 existing_cases.add(cn_int)  # Mark as added
 
-            # --- Append to Excel ---
-            if new_rows_to_add:
-                start_row = (RMA_table.data_body_range.last_cell.row + 1
-                            if RMA_table.data_body_range else RMA_table.range.row + 1)
-                start_col = RMA_table.range.column
+            
+            # --- Append new rows to the table first ---
+            table_start_row = RMA_table.data_body_range.last_cell.row + 1 if RMA_table.data_body_range else RMA_table.range.row + 1
+            table_start_col = RMA_table.range.column
 
-                # Write rows
-                sheet_out.range((start_row, start_col)).value = new_rows_to_add
+            # Write new rows
+            sheet_out.range((table_start_row, table_start_col)).value = [item["row"] for item in new_rows_to_add]
 
-                # --- Convert Case Number column to real hyperlinks ---
-                rma_headers = RMA_table.header_row_range.value
-                link_col_idx = rma_headers.index("Case Number") + 1  # Excel column index (1-based)
+            # --- Build formulas for the Case Number column, matching the new rows ---
+            rma_headers = RMA_table.header_row_range.value
+            case_col_idx = rma_headers.index("Case Number")  # 0-based index
 
-                # starting row of new rows
-                start_row_hyperlink = start_row
+            hyperlink_formulas = [
+                f'=HYPERLINK("{SF_INSTANCE}/lightning/r/Case/{item["case_id"]}/view","{item["case_number"]}")'
+                for item in new_rows_to_add
+            ]
 
-                for i, rec_row in enumerate(new_rows_to_add):
-                    cell = sheet_out.cells(start_row_hyperlink + i, start_col + link_col_idx - 1)
-                    case_id = records[i]['Id']  # use the actual Salesforce Id
-                    case_number = rec_row[link_col_idx - 1]  # value in that cell (currently just the number)
-                    cell.api.Hyperlinks.Add(
-                        Anchor=cell.api,
-                        Address=f"{SF_INSTANCE}/lightning/r/Case/{case_id}/view",
-                        TextToDisplay=str(case_number)
-                    )
+            # Write formulas directly into the Case Number column of the table
+            for i, formula in enumerate(hyperlink_formulas):
+                # Row in sheet = first appended row + offset
+                sheet_out.range((table_start_row + i, table_start_col + case_col_idx)).formula = formula
+
 
             # --- Countdown until next cycle ---
             elapsed = time.time() - cycle_start_time

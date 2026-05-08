@@ -12,19 +12,40 @@ TABLEAU_PAT_SECRET = os.environ.get("TABLEAU_PAT_SECRET")
 TABLEAU_SITE = os.environ.get("TABLEAU_SITE_CONTENTURL", "")
 
 # Authenticate
-tableau_auth = TSC.PersonalAccessTokenAuth(TABLEAU_PAT_NAME, TABLEAU_PAT_SECRET, site_id=TABLEAU_SITE)
-server = TSC.Server(TABLEAU_SERVER, use_server_version=True, http_options={"verify": False})
+tableau_auth = TSC.PersonalAccessTokenAuth(
+    TABLEAU_PAT_NAME,
+    TABLEAU_PAT_SECRET,
+    site_id=TABLEAU_SITE
+)
+server = TSC.Server(
+    TABLEAU_SERVER,
+    use_server_version=True,
+    http_options={"verify": False}
+)
 
 with server.auth.sign_in(tableau_auth):
-    # Get all workbooks
-    all_workbooks, pagination_item = server.workbooks.get()
-    print(f"Total workbooks on site: {pagination_item.total_available}\n")
 
-    # Print workbook names and LUIDs
-    for wb in all_workbooks:
-        print(f"Workbook: {wb.name}, LUID: {wb.id}")
+    req_opts = TSC.RequestOptions()
+    req_opts.page_size = 100  # safe pagination
 
-        # Populate views for each workbook
-        server.workbooks.populate_views(wb)
-        for v in wb.views:
-            print(f"  View: {v.name}, LUID: {v.id}")
+    all_views = []
+    pager = TSC.Pager(server.views.get, req_opts)
+
+    for view in pager:
+        all_views.append(view)
+
+    print(f"Retrieved {len(all_views)} views safely\n")
+
+    # ✅ TARGET CONTENT URL FROM YOUR TABLEAU LINK
+    # "SalesOrdersShipmentsbyMonth/sheets/Sheet1"/
+    target_content_url = "ProductInformation/sheets/Sheet1"
+
+    for v in all_views:
+        if v.content_url == target_content_url:
+            print("✅ FOUND VIEW")
+            print("View Name :", v.name)
+            print("Content URL:", v.content_url)
+            print("View ID   :", v.id)
+            break
+    else:
+        print("❌ View not found")

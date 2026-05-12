@@ -13,7 +13,6 @@ from simple_salesforce import Salesforce
 from rapidfuzz import process
 from colorama import init as colorama_init, Fore, Style
 
-# Initialize colorama
 colorama_init(autoreset=True)
 
 # ============================================================================
@@ -25,19 +24,18 @@ load_dotenv(r"C:\Users\emp35107\OneDrive - NORMA Group\Documents\tableau.env")
 
 WB_PATH = r"C:\Users\emp35107\OneDrive - NORMA Group\Documents\PPMs.xlsx"
 
-# Salesforce creds
 SF_USERNAME = os.getenv("SF_USERNAME")
 SF_PASSWORD = os.getenv("SF_PASSWORD")
 SF_TOKEN = os.getenv("SF_TOKEN")
 SF_INSTANCE = os.getenv("SF_INSTANCE")
 
-# Tableau creds
 TABLEAU_SERVER = os.getenv("TABLEAU_SERVER")
 TABLEAU_PAT_NAME = os.getenv("TABLEAU_PAT_NAME")
 TABLEAU_PAT_SECRET = os.getenv("TABLEAU_PAT_SECRET")
 TABLEAU_SITE = os.getenv("TABLEAU_SITE_CONTENTURL", "")
+
+TABLEAU_RMA_VIEW_ID = "30de1fa1-c6bd-4b5a-bfe8-020da690af8d"
 TABLEAU_SHIPMENT_VIEW_ID = "41b7e54e-3da8-4b53-bfaf-047410bb4fd8"
-TABLEAU_RMA_VIEW_ID = "128dec6d-e4ab-4843-a337-43ebad53c779"
 TABLEAU_PRODUCT_VIEW_ID = "241e5cc1-6d7c-484a-99ad-d5700c3fd281"
 
 CYCLE_INTERVAL_SECONDS = 3600
@@ -49,10 +47,8 @@ CYCLE_INTERVAL_SECONDS = 3600
 def clear_terminal():
     os.system("cls")
 
-
 def timestamp():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
 
 def banner(msg):
     print(f"\n{'=' * 60}")
@@ -60,30 +56,18 @@ def banner(msg):
     print(f"  {timestamp()}")
     print(f"{'=' * 60}\n")
 
-
 def normalize_number(val):
-    """Strip leading zeros and whitespace from a numeric string."""
-    s = str(val).strip()
     try:
-        return str(int(float(s)))
-    except (ValueError, TypeError):
-        return s
-
+        return str(int(float(str(val).strip())))
+    except:
+        return None
 
 def normalize_text(text):
-    """Lowercase, remove special chars, collapse whitespace."""
     t = str(text or '').lower()
     t = re.sub(r"[^a-z0-9\s]", " ", t)
-    t = re.sub(r"\s+", " ", t).strip()
-    return t
-
+    return re.sub(r"\s+", " ", t).strip()
 
 def truncate_for_fuzzy(text, max_chars=500):
-    """
-    Truncate text for fuzzy matching to avoid email chain noise.
-    Takes the first N characters which is typically the actual complaint,
-    not the forwarded email thread below.
-    """
     if not text:
         return ""
     truncated = text[:max_chars]
@@ -93,9 +77,8 @@ def truncate_for_fuzzy(text, max_chars=500):
             return truncated[:idx].strip()
     return truncated.strip()
 
-
 # ============================================================================
-# TABLEAU AUTH (ONCE PER CYCLE)
+# TABLEAU AUTH
 # ============================================================================
 
 def tableau_sign_in():
@@ -108,13 +91,11 @@ def tableau_sign_in():
     server.auth.sign_in(auth)
     return server
 
-
 def tableau_sign_out(server):
     try:
         server.auth.sign_out()
-    except Exception:
+    except:
         pass
-
 
 # ============================================================================
 # SHIPMENT HELPERS (LOCKED)
@@ -132,7 +113,6 @@ def shipment_clean_val(val):
         pass
     return val
 
-
 def shipment_derive_source(row):
     part_category = str(row.get("Part Category", "")).strip().upper()
     if part_category == "M":
@@ -140,7 +120,6 @@ def shipment_derive_source(row):
     if part_category == "B":
         return str(row.get("Supplier", "")).strip().upper()
     return ""
-
 
 def shipment_generate_ident(row):
     return (
@@ -150,7 +129,6 @@ def shipment_generate_ident(row):
         shipment_clean_val(row.get("Year")) + '|' +
         shipment_clean_val(row.get("Month"))
     )
-
 
 # ============================================================================
 # RMA HELPERS (LOCKED)
@@ -162,13 +140,11 @@ def rma_parse_case_number(x):
     except:
         return None
 
-
 def rma_clean_number(x):
     try:
         return float(str(x).replace(",", ""))
     except:
         return None
-
 
 def rma_collect_case_comments(sf, case_ids):
     if not case_ids:
@@ -195,7 +171,6 @@ def rma_collect_case_comments(sf, case_ids):
 
     return comments_map
 
-
 def rma_derive_source(row):
     pc = str(row.get("Part Category", "")).upper()
     if pc == "M":
@@ -203,7 +178,6 @@ def rma_derive_source(row):
     if pc == "B":
         return str(row.get("Supplier", ""))
     return ""
-
 
 # ============================================================================
 # SUBJECT PARSING HELPERS
@@ -218,7 +192,6 @@ def extract_stock_code_from_subject(subject):
         return match.group(1).strip()
     return None
 
-
 def extract_quantity_from_subject(subject):
     """Extract quantity from subject line."""
     if not subject:
@@ -232,7 +205,6 @@ def extract_quantity_from_subject(subject):
             total_qty += num
     return total_qty if total_qty > 0 else None
 
-
 def extract_stock_codes_from_items(rec):
     """Extract stock codes from Item_1__c through Item_10__c fields."""
     codes = []
@@ -241,16 +213,12 @@ def extract_stock_codes_from_items(rec):
         val = rec.get(field)
         if val:
             cleaned = str(val).strip()
-            # Skip template text
             if cleaned.startswith("SKU") or not cleaned:
                 continue
-            # Some Item fields have embedded data like "DS-092_124.0100_1.0000..."
-            # Take just the stock code part before any underscore+number pattern
             code_part = re.split(r'_\d', cleaned)[0].strip()
             if code_part:
                 codes.append(code_part)
     return codes
-
 
 # ============================================================================
 # PRODUCT TABLE LOOKUP
@@ -266,13 +234,11 @@ def fetch_product_table(server):
     print(Fore.GREEN + f"  [{timestamp()}] Product table loaded: {len(df)} rows.")
     return df
 
-
 def build_product_lookup(product_df):
     """Build lookup structures from product table for direct and fuzzy matching."""
     stock_codes = product_df['Stock Code'].astype(str).str.strip().tolist()
     normalized_codes = [normalize_text(s) for s in stock_codes]
     return product_df, stock_codes, normalized_codes
-
 
 def lookup_product_by_stock_code(stock_code, product_df, stock_codes, normalized_codes):
     """Direct lookup: find product info by exact stock code match."""
@@ -297,7 +263,6 @@ def lookup_product_by_stock_code(stock_code, product_df, stock_codes, normalized
                 "match_type": "DIRECT"
             }
     return None
-
 
 def fuzzy_match_product(text, product_df, stock_codes, normalized_codes, threshold=70):
     """Fuzzy match text against product stock codes."""
@@ -326,7 +291,6 @@ def fuzzy_match_product(text, product_df, stock_codes, normalized_codes, thresho
             "match_type": f"FUZZY ({score:.0f}%)"
         }
     return None
-
 
 def resolve_product_info(rec, comments_text, product_df, stock_codes, normalized_codes):
     """
@@ -370,32 +334,31 @@ def resolve_product_info(rec, comments_text, product_df, stock_codes, normalized
 
     return None
 
-
 # ============================================================================
-# RMA PIPELINE
+# RMA PIPELINE (AUTHORITATIVE – TIERED MATCHING)
 # ============================================================================
 
 def run_rma_pipeline(server, wb):
     banner("STARTING RMA PIPELINE")
 
-    # STEP 1: Load existing cases from Excel
     sheet = wb.sheets["RMA Raw"]
     table = sheet.tables["RMA_Raw"]
 
-    values = table.range.value
-    if len(values) <= 1:
-        existing = set()
-    else:
-        df_existing = pd.DataFrame(values[1:], columns=values[0])
-        existing = set(
-            df_existing["Case Number"]
-            .apply(rma_parse_case_number)
-            .dropna()
-            .astype(int)
-            .tolist()
-        )
+    # ------------------------------------------------------------------
+    # Existing Excel case numbers (dedup)
+    # ------------------------------------------------------------------
+    existing = set()
+    if table.range.value and len(table.range.value) > 1:
+        existing = {
+            int(float(x)) for x in
+            pd.DataFrame(
+                table.range.value[1:], columns=table.range.value[0]
+            )["Case Number"].dropna()
+        }
 
-    # STEP 2: Salesforce query
+    # ------------------------------------------------------------------
+    # Salesforce query (SOURCE OF TRUTH FOR EXISTENCE)
+    # ------------------------------------------------------------------
     sf = Salesforce(
         username=SF_USERNAME,
         password=SF_PASSWORD,
@@ -403,11 +366,9 @@ def run_rma_pipeline(server, wb):
         instance_url=SF_INSTANCE
     )
 
-    # -----------------------------------------------------------------------
-    # HISTORICAL PULL - change this line back after initial backfill:
-    # start_date = (datetime.now(timezone.utc) - pd.DateOffset(months=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    # -----------------------------------------------------------------------
-    start_date = "2025-01-01T00:00:00Z"
+    start_date = (
+        datetime.now(timezone.utc) - pd.DateOffset(months=2)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     soql = f"""
         SELECT
@@ -415,7 +376,6 @@ def run_rma_pipeline(server, wb):
             CaseNumber,
             RMA_Number__c,
             RMA_Value__c,
-            Order_Number__c,
             Owner.Name,
             Description,
             Subject,
@@ -424,17 +384,8 @@ def run_rma_pipeline(server, wb):
             WH__c,
             Reason,
             CreatedDate,
-            Item_1__c,
-            Item_2__c,
-            Item_3__c,
-            Item_4__c,
-            Item_5__c,
-            Item_6__c,
-            Item_7__c,
-            Item_8__c,
-            Item_9__c,
-            Item_10__c,
-            Comments_Exist__c
+            Item_1__c, Item_2__c, Item_3__c, Item_4__c, Item_5__c,
+            Item_6__c, Item_7__c, Item_8__c, Item_9__c, Item_10__c
         FROM Case
         WHERE
             CreatedDate >= {start_date}
@@ -444,244 +395,238 @@ def run_rma_pipeline(server, wb):
     """
 
     records = sf.query_all(soql)["records"]
-    print(f"  [{timestamp()}] Salesforce returned {len(records)} cases.")
-
-    new_records = [
+    cases = [
         r for r in records
-        if rma_parse_case_number(r["CaseNumber"]) not in existing
+        if int(float(r["CaseNumber"])) not in existing
     ]
-    print(f"  [{timestamp()}] {len(new_records)} new cases after dedup.")
 
-    if not new_records:
-        print("✅ No new cases.")
+    print(f"  [{timestamp()}] Salesforce returned {len(records)} cases.")
+    print(f"  [{timestamp()}] {len(cases)} new cases after dedup.")
+
+    if not cases:
+        print("✅ No new RMAs.")
         return
 
-    # Collect comments
-    comments = rma_collect_case_comments(
-        sf, [r["Id"] for r in new_records]
-    )
-
-    # STEP 3: Fetch Tableau RMA data (using shared server)
+    # ------------------------------------------------------------------
+    # Tableau RMA extract (ENRICHMENT ONLY)
+    # ------------------------------------------------------------------
     view = server.views.get_by_id(TABLEAU_RMA_VIEW_ID)
     server.views.populate_csv(view)
-    tableau_df = pd.read_csv(io.BytesIO(b"".join(view.csv)))
-    tableau_df.columns = tableau_df.columns.str.strip()
+    tdf = pd.read_csv(io.BytesIO(b"".join(view.csv)))
+    tdf.columns = tdf.columns.str.strip()
 
-    # Normalize Tableau RMA numbers (strip leading zeros)
-    tableau_df["_rma_norm"] = tableau_df["Rma Number"].astype(str).str.strip().apply(normalize_number)
+    if "RMA #" in tdf.columns and "Rma Number" not in tdf.columns:
+        tdf.rename(columns={"RMA #": "Rma Number"}, inplace=True)
 
-    # Normalize Tableau Order numbers (strip leading zeros) if column exists
-    has_order_col = "Original Order" in tableau_df.columns
-    if has_order_col:
-        tableau_df["_order_norm"] = tableau_df["Original Order"].astype(str).str.strip().apply(normalize_number)
+    tdf["_rma_norm"] = tdf["Rma Number"].astype(str).apply(normalize_number)
+    tdf["_issue_date"] = pd.to_datetime(tdf["Issue Date"], errors="coerce")
 
-    # Drop null Issue Date rows
-    tableau_df = tableau_df[pd.notna(tableau_df["Issue Date"])].copy()
+    # ------------------------------------------------------------------
+    # Fetch product table (ONCE)
+    # ------------------------------------------------------------------
+    product_df, stock_codes, normalized_codes = build_product_lookup(
+        fetch_product_table(server)
+    )
 
-    # STEP 3b: Fetch product table for fuzzy fallback
-    product_df = fetch_product_table(server)
-    product_df_ref, stock_codes, normalized_codes = build_product_lookup(product_df)
+    # ------------------------------------------------------------------
+    # Collect comments (only once)
+    # ------------------------------------------------------------------
+    comments = rma_collect_case_comments(
+        sf, [c["Id"] for c in cases]
+    )
 
-    # STEP 4: Build case maps with normalized keys
-    rma_case_map = {}
-    order_case_map = {}
-    orphan_cases = []
+    rows_with_links = []
+    stats = {"tableau_exact": 0, "tableau_contextual": 0, "product_resolved": 0, "sf_only": 0}
 
-    for r in new_records:
-        rma_raw = r.get("RMA_Number__c")
-        order_raw = r.get("Order_Number__c")
-
-        if rma_raw:
-            rma_norm = normalize_number(rma_raw)
-            rma_case_map[rma_norm] = r
-        elif order_raw:
-            order_norm = normalize_number(order_raw)
-            order_case_map[order_norm] = r
-        else:
-            orphan_cases.append(r)
-
-    print(f"  [{timestamp()}] Cases with RMA#: {len(rma_case_map)} | Order# fallback: {len(order_case_map)} | Orphans: {len(orphan_cases)}")
-
-    # STEP 5: Match and build rows
-    start_row = table.data_body_range.last_cell.row + 1 if table.data_body_range else table.range.row + 1
-    start_col = table.range.column
-
-    rows = []
-    matched_case_ids = set()
-
-    # --- PASS A: Match by RMA Number ---
-    for _, t in tableau_df.iterrows():
-        rma_norm = normalize_number(t["Rma Number"])
-        sf_rec = rma_case_map.get(rma_norm)
-        if not sf_rec:
-            continue
-
+    # ------------------------------------------------------------------
+    # CASE-DRIVEN PROCESSING
+    # ------------------------------------------------------------------
+    for sf_rec in cases:
         case_id = sf_rec["Id"]
-        if case_id in matched_case_ids:
-            continue
-        matched_case_ids.add(case_id)
+        enrichment_source = "SALESFORCE_ONLY"
+        tableau_row = None
 
-        case_num = rma_parse_case_number(sf_rec["CaseNumber"])
-        qty = rma_clean_number(t.get("Ordered Qty"))
+        sf_rma = normalize_number(sf_rec.get("RMA_Number__c"))
+        sf_customer = normalize_text(sf_rec.get("Account", {}).get("Name", ""))
+        sf_wh = normalize_text(sf_rec.get("WH__c"))
+        sf_date = (pd.to_datetime(sf_rec.get("CreatedDate"), errors="coerce").tz_convert(None))
+
+        # ==========================================================
+        # TIER 1 — EXACT RMA MATCH
+        # ==========================================================
+        if sf_rma:
+            exact = tdf[tdf["_rma_norm"] == sf_rma]
+            if not exact.empty:
+                tableau_row = exact.iloc[0]
+                enrichment_source = "TABLEAU_EXACT"
+
+        # ==========================================================
+        # TIER 2 — CONTEXTUAL MATCH (IF NO EXACT MATCH)
+        # ==========================================================
+        if tableau_row is None:
+            candidates = []
+            for _, t in tdf.iterrows():
+                if not pd.notna(t["_issue_date"]) or not pd.notna(sf_date):
+                    continue
+
+                if abs((t["_issue_date"] - sf_date).days) > 3:
+                    continue
+
+                if normalize_text(t.get("Warehouse Name", "")) != sf_wh:
+                    continue
+
+                if normalize_text(t.get("Customer Name", "")) != sf_customer:
+                    continue
+
+                candidates.append(t)
+
+            if candidates:
+                product = resolve_product_info(
+                    sf_rec,
+                    comments.get(case_id, ""),
+                    product_df,
+                    stock_codes,
+                    normalized_codes
+                )
+
+                if product:
+                    for t in candidates:
+                        t_stock = normalize_text(t.get("Stock Code", ""))
+                        if normalize_text(product["stock_code"]) == t_stock:
+                            tableau_row = t
+                            enrichment_source = "TABLEAU_CONTEXTUAL"
+                            break
+
+        # ==========================================================
+        # TIER 3 — SALESFORCE-ONLY: PRODUCT RESOLUTION FROM TABLE
+        # (Only runs if no Tableau match was found)
+        # ==========================================================
+        product_info = None
+        if tableau_row is None:
+            product_info = resolve_product_info(
+                sf_rec,
+                comments.get(case_id, ""),
+                product_df,
+                stock_codes,
+                normalized_codes
+            )
+            if product_info:
+                enrichment_source = "PRODUCT_RESOLVED"
+
+        # ==========================================================
+        # BUILD EXCEL ROW (ONE PER CASE — ALWAYS)
+        # ==========================================================
+        qty = (
+            rma_clean_number(tableau_row.get("Ordered Qty"))
+            if tableau_row is not None else
+            extract_quantity_from_subject(sf_rec.get("Subject", ""))
+        )
+
+        # Determine source, stock code, category, part category
+        if tableau_row is not None:
+            # Tableau-enriched: use Tableau data
+            row_source = rma_derive_source(tableau_row)
+            row_stock_code = tableau_row.get("Stock Code", "")
+            row_part_category = tableau_row.get("Part Category", "")
+            row_category = tableau_row.get("Category", "")
+            row_enriched = "YES"
+        elif product_info:
+            # No Tableau match, but product table resolved it
+            row_source = product_info["source"] or ""
+            row_stock_code = product_info["stock_code"] or ""
+            row_part_category = product_info["part_category"] or ""
+            row_category = product_info["category"] or ""
+            row_enriched = "YES"
+        else:
+            # Truly unresolved: no Tableau, no product match
+            row_source = "Salesforce Only"
+            row_stock_code = ""
+            row_part_category = ""
+            row_category = ""
+            row_enriched = "NO"
 
         excel_row = [
-            t.get("Issue Date"),
-            case_num,
-            t.get("Problem"),
+            tableau_row.get("Issue Date") if tableau_row is not None
+            else sf_rec.get("CreatedDate", "").split("T")[0],
+
+            rma_parse_case_number(sf_rec["CaseNumber"]),
+            tableau_row.get("Problem") if tableau_row is not None
+            else sf_rec.get("Reason", ""),
+
             sf_rec["Owner"]["Name"] if sf_rec.get("Owner") else "",
             sf_rec.get("Description", ""),
             comments.get(case_id, ""),
+
             int(qty) if qty else "",
             float(sf_rec.get("RMA_Value__c")) if sf_rec.get("RMA_Value__c") else "",
             sf_rec.get("Account", {}).get("Name", ""),
             sf_rec.get("Contact_Type__c", ""),
-            rma_derive_source(t),
-            t.get("Stock Code", ""),
-            t.get("Part Category", ""),
-            t.get("Category", ""),
-            t.get("Warehouse Name", ""),
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "YES"
+
+            row_source,
+            row_stock_code,
+            row_part_category,
+            row_category,
+
+            tableau_row.get("Warehouse Name", "") if tableau_row is not None
+            else sf_rec.get("WH__c", ""),
+
+            timestamp(),
+            row_enriched
         ]
 
-        link = f'=HYPERLINK("{SF_INSTANCE}/lightning/r/Case/{case_id}/view","{case_num}")'
-        rows.append((excel_row, link))
-
-    print(f"  [{timestamp()}] RMA# matched: {len(rows)}")
-
-    # --- PASS B: Match by Order Number ---
-    order_matched = 0
-    if has_order_col and order_case_map:
-        for _, t in tableau_df.iterrows():
-            order_norm = normalize_number(t.get("Original Order", ""))
-            sf_rec = order_case_map.get(order_norm)
-            if not sf_rec:
-                continue
-
-            case_id = sf_rec["Id"]
-            if case_id in matched_case_ids:
-                continue
-            matched_case_ids.add(case_id)
-
-            case_num = rma_parse_case_number(sf_rec["CaseNumber"])
-            qty = rma_clean_number(t.get("Ordered Qty"))
-
-            excel_row = [
-                t.get("Issue Date"),
-                case_num,
-                t.get("Problem"),
-                sf_rec["Owner"]["Name"] if sf_rec.get("Owner") else "",
-                sf_rec.get("Description", ""),
-                comments.get(case_id, ""),
-                int(qty) if qty else "",
-                float(sf_rec.get("RMA_Value__c")) if sf_rec.get("RMA_Value__c") else "",
-                sf_rec.get("Account", {}).get("Name", ""),
-                sf_rec.get("Contact_Type__c", ""),
-                rma_derive_source(t),
-                t.get("Stock Code", ""),
-                t.get("Part Category", ""),
-                t.get("Category", ""),
-                t.get("Warehouse Name", ""),
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "YES"
-            ]
-
-            link = f'=HYPERLINK("{SF_INSTANCE}/lightning/r/Case/{case_id}/view","{case_num}")'
-            rows.append((excel_row, link))
-            order_matched += 1
-
-    print(f"  [{timestamp()}] Order# matched: {order_matched}")
-
-    # --- PASS C: Unmatched cases (no Tableau match) ---
-    all_unmatched = list(orphan_cases)
-    for r in rma_case_map.values():
-        if r["Id"] not in matched_case_ids:
-            all_unmatched.append(r)
-    for r in order_case_map.values():
-        if r["Id"] not in matched_case_ids:
-            all_unmatched.append(r)
-
-    fuzzy_matched = 0
-    fuzzy_failed = 0
-
-    for sf_rec in all_unmatched:
-        case_id = sf_rec["Id"]
-        if case_id in matched_case_ids:
-            continue
-        matched_case_ids.add(case_id)
-
-        case_num = rma_parse_case_number(sf_rec["CaseNumber"])
-        comment_text = comments.get(case_id, "")
-
-        # Try product resolution (Item fields -> Subject -> Description -> Comments)
-        product_info = resolve_product_info(
-            sf_rec, comment_text, product_df_ref, stock_codes, normalized_codes
+        link = (
+            f'=HYPERLINK("{SF_INSTANCE}/lightning/r/Case/{case_id}/view",'
+            f'"{excel_row[1]}")'
         )
 
-        # Extract qty from subject
-        subject = sf_rec.get("Subject", "") or ""
-        qty = extract_quantity_from_subject(subject)
+        rows_with_links.append((excel_row, link))
 
-        if product_info:
-            source = product_info["source"] or ""
-            stock_code = product_info["stock_code"] or ""
-            category = product_info["category"] or ""
-            part_category = product_info["part_category"] or ""
-            fuzzy_matched += 1
+        # Track stats
+        if enrichment_source == "TABLEAU_EXACT":
+            stats["tableau_exact"] += 1
+        elif enrichment_source == "TABLEAU_CONTEXTUAL":
+            stats["tableau_contextual"] += 1
+        elif enrichment_source == "PRODUCT_RESOLVED":
+            stats["product_resolved"] += 1
         else:
-            source = "Unidentified"
-            stock_code = ""
-            category = ""
-            part_category = ""
-            fuzzy_failed += 1
+            stats["sf_only"] += 1
 
-        # Parse date from CreatedDate
-        created = sf_rec.get("CreatedDate", "")
-        try:
-            dt = datetime.strptime(created.split("T")[0], "%Y-%m-%d")
-            issue_date = f"{dt.month}/{dt.day}/{dt.year}"
-        except:
-            issue_date = ""
+    # ------------------------------------------------------------------
+    # SUMMARY
+    # ------------------------------------------------------------------
+    print(f"  [{timestamp()}] Matching summary:")
+    print(f"    Tableau exact:      {stats['tableau_exact']}")
+    print(f"    Tableau contextual: {stats['tableau_contextual']}")
+    print(f"    Product resolved:   {stats['product_resolved']}")
+    print(f"    Salesforce only:    {stats['sf_only']}")
 
-        excel_row = [
-            issue_date,
-            case_num,
-            sf_rec.get("Reason", ""),
-            sf_rec["Owner"]["Name"] if sf_rec.get("Owner") else "",
-            sf_rec.get("Description", ""),
-            comment_text,
-            int(qty) if qty else "",
-            float(sf_rec.get("RMA_Value__c")) if sf_rec.get("RMA_Value__c") else "",
-            sf_rec.get("Account", {}).get("Name", ""),
-            sf_rec.get("Contact_Type__c", ""),
-            source,
-            stock_code,
-            part_category,
-            category,
-            sf_rec.get("WH__c", ""),
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "YES"
-        ]
-
-        link = f'=HYPERLINK("{SF_INSTANCE}/lightning/r/Case/{case_id}/view","{case_num}")'
-        rows.append((excel_row, link))
-
-    print(f"  [{timestamp()}] Orphan/unmatched: {len(all_unmatched)} (product matched: {fuzzy_matched}, no match: {fuzzy_failed})")
-
-    # STEP 6: Write to Excel
-    if not rows:
+    # ------------------------------------------------------------------
+    # WRITE TO EXCEL
+    # ------------------------------------------------------------------
+    if not rows_with_links:
         print(Fore.YELLOW + "⚠️ No rows to write.")
         return
 
-    table.resize(table.range.resize(table.range.rows.count + len(rows)))
-    sheet.range((start_row, start_col)).value = [r[0] for r in rows]
+    start_row = (
+        table.data_body_range.last_cell.row + 1
+        if table.data_body_range else table.range.row + 1
+    )
+    start_col = table.range.column
+
+    table.resize(
+        table.range.resize(table.range.rows.count + len(rows_with_links))
+    )
+
+    sheet.range((start_row, start_col)).value = [
+        r[0] for r in rows_with_links
+    ]
 
     case_idx = table.header_row_range.value.index("Case Number")
-    for i, (_, link) in enumerate(rows):
+    for i, (_, link) in enumerate(rows_with_links):
         sheet.range((start_row + i, start_col + case_idx)).formula = link
 
     wb.save()
-    print(Fore.GREEN + f"✅ {len(rows)} RMA rows written to Excel.")
+    print(Fore.GREEN + f"✅ {len(rows_with_links)} RMA rows written to Excel.")
 
 
 # ============================================================================

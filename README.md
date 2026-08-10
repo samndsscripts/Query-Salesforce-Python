@@ -2,49 +2,43 @@
 
 ## Overview
 
-This Python automation combines Salesforce, Tableau, and Excel into a single reporting workflow. The script continuously monitors new RMA (Return Material Authorization) cases and shipment records, enriches data through multiple matching methods, prevents duplicates, and automatically updates a centralized Excel workbook used for business reporting.
+This Python automation combines Salesforce, Tableau, and Excel into a single reporting workflow. The project retrieves RMA (Return Material Authorization) and shipment data, enriches records using multiple matching strategies, prevents duplicates, and updates centralized reporting workbooks.
 
-The solution is designed to reduce manual data entry, improve data quality, and provide a consistent reporting source across multiple systems.
+The automation is designed to reduce manual reporting effort while improving data quality and consistency across business systems.
 
 ---
 
 ## Features
 
-### RMA Automation
+### RMA Processing
 
-The RMA pipeline:
+- Retrieves new RMA cases from Salesforce.
+- Prevents duplicate processing using existing Excel records.
+- Pulls RMA enrichment data from Tableau.
+- Collects Salesforce case comments.
+- Resolves product information using direct and fuzzy matching techniques.
+- Creates hyperlinks back to Salesforce records.
+- Appends processed data into reporting tables.
 
-- Retrieves newly created RMA cases from Salesforce
-- Prevents duplicate processing by comparing against existing Excel records
-- Pulls supporting RMA data from Tableau
-- Collects Salesforce case comments for additional context
-- Enriches records using product reference data
-- Creates direct hyperlinks back to Salesforce cases
-- Writes processed records into an Excel reporting table
+### Shipment Processing
 
-### Product Resolution Logic
+- Retrieves shipment records from Tableau.
+- Cleans and standardizes source data.
+- Derives supplier and manufacturing source information.
+- Generates unique shipment identifiers.
+- Prevents duplicate entries.
+- Appends new shipment activity to Excel reporting tables.
 
-To maximize data accuracy, the script uses a tiered matching strategy to identify products associated with RMA cases.
+### Product Resolution
 
-Matching attempts occur in the following order:
+The automation uses a tiered matching strategy:
 
-1. Direct lookup from Salesforce item fields
-2. Stock code extraction from case subjects
+1. Item field lookup
+2. Subject line stock code extraction
 3. Fuzzy matching against case descriptions
 4. Fuzzy matching against case comments
 
-This approach allows product information to be identified even when structured data is incomplete.
-
-### Shipment Automation
-
-The shipment pipeline:
-
-- Retrieves shipment data from Tableau
-- Cleans and standardizes source data
-- Derives supplier or manufacturing source information
-- Generates unique shipment identifiers
-- Removes duplicate records
-- Appends only new shipment transactions to Excel
+This approach improves product identification when structured data is incomplete.
 
 ---
 
@@ -54,90 +48,103 @@ The shipment pipeline:
 
 Used for:
 
-- RMA case records
-- Case comments
-- Customer information
-- Product-related fields
-- Financial values
+- RMA Cases
+- Case Comments
+- Customer Information
+- Product Data
+- Financial Information
 
 ### Tableau
 
 Used for:
 
-- RMA enrichment data
-- Shipment transaction data
-- Product reference lookup tables
+- RMA Enrichment Data
+- Shipment Data
+- Product Reference Tables
 
 ### Excel
 
-Used as the centralized reporting repository where processed data is stored for business analysis.
+Used as the final reporting and tracking repository.
 
 ---
 
-## Data Enrichment Workflow
+## Repository Structure
 
-### RMA Matching
-
-The script attempts to enrich each RMA using the following hierarchy:
-
-#### Tier 1: Exact Match
-
-Matches Salesforce RMA numbers directly against Tableau records.
-
-#### Tier 2: Contextual Match
-
-When an exact match cannot be found, the script compares:
-
-- Customer
-- Warehouse
-- Date proximity
-- Product information
-
-to identify likely Tableau records.
-
-#### Tier 3: Product Resolution
-
-If no Tableau match exists, product information is resolved directly from the product reference table using exact and fuzzy matching techniques.
-
-#### Tier 4: Salesforce Only
-
-If no enrichment data can be found, the case is still recorded and flagged for review.
+```text
+Query-Salesforce-Python/
+│
+├── README.md
+│
+├── src/
+│   ├── combined_pipeline.py
+│   └── combined_pipeline_server_v1.py
+│
+├── archive/
+│   ├── rma.py
+│   ├── shipments.py
+│   ├── report_automation_9.py
+│   ├── report_automation_10.py
+│   ├── report_automation_11.py
+│   └── report_automation_12.py
+│
+└── miscellaneous utility scripts
+```
 
 ---
 
-## Duplicate Prevention
+## Active Scripts
 
-### RMA Records
+### `/src/combined_pipeline.py`
 
-Duplicates are prevented using Salesforce case numbers already stored in Excel.
+Primary production pipeline that:
 
-### Shipment Records
+- Connects to Salesforce
+- Connects to Tableau
+- Processes new RMAs
+- Processes shipment data
+- Updates reporting workbooks
+- Runs on a scheduled cycle
 
-Unique shipment identifiers are generated using:
+### `/src/combined_pipeline_server_v1.py`
 
-- Manufacturing location
-- Source
-- Quantity
-- Year
-- Month
-
-Only records that do not already exist are added.
+Server-oriented implementation of the combined pipeline designed for automated execution environments.
 
 ---
 
-## Automation Cycle
+## Archive
 
-The application operates continuously on a scheduled interval.
+The `/archive` folder contains previous versions and legacy components retained for reference purposes:
 
-Each cycle performs the following tasks:
+- Earlier RMA workflows
+- Earlier shipment workflows
+- Historical report automation versions
+- Development and testing scripts
 
-1. Connect to Tableau
-2. Open the reporting workbook
-3. Process new RMAs
-4. Process new shipments
-5. Save Excel updates
-6. Disconnect from Tableau
-7. Wait for the next execution cycle
+These files are not actively maintained.
+
+---
+
+## Automation Workflow
+
+```text
+Salesforce
+     │
+     ▼
+Case Retrieval
+     │
+     ▼
+Product Resolution
+     │
+     ├── Tableau Product Data
+     ├── Tableau RMA Data
+     └── Tableau Shipment Data
+     │
+     ▼
+Data Enrichment
+     │
+     ▼
+Excel Reporting Workbook
+```
 
 ---
 
@@ -147,34 +154,46 @@ Each cycle performs the following tasks:
 - Pandas
 - xlwings
 - Tableau Server Client (TSC)
-- simple-salesforce
+- Simple Salesforce
 - RapidFuzz
 - python-dotenv
 - Colorama
 
 ---
 
-## Project Structure
+## Version Control Workflow
 
-```text
-project/
-│
-├── main.py
-├── README.md
-├── requirements.txt
-├── .gitignore
-└── .env
+This repository is maintained across multiple development machines.
+
+Before starting work:
+
+```bash
+git pull
+```
+
+After making changes:
+
+```bash
+git add .
+git commit -m "Description of changes"
+git push
+```
+
+Check repository status:
+
+```bash
+git status
 ```
 
 ---
 
 ## Business Benefits
 
-- Eliminates repetitive manual reporting tasks
-- Reduces data entry errors
-- Consolidates information from multiple systems
-- Improves product identification accuracy
-- Maintains a deduplicated reporting dataset
+- Reduces manual reporting effort
+- Improves data consistency
+- Consolidates multiple enterprise systems
+- Automates data enrichment
+- Maintains a deduplicated dataset
 - Provides traceability back to Salesforce records
 - Delivers near real-time reporting updates
 
@@ -182,19 +201,17 @@ project/
 
 ## Configuration
 
-This project uses environment variables to store sensitive credentials and connection details.
+Sensitive information such as:
 
-Configuration items include:
+- Salesforce credentials
+- Tableau credentials
+- Workbook paths
+- Environment variables
 
-- Salesforce authentication
-- Tableau authentication
-- Workbook location
-- Scheduled execution interval
-
-Credentials and company-specific configuration files should not be committed to source control.
+is stored outside source control using `.env` files.
 
 ---
 
 ## Disclaimer
 
-This repository contains automation logic only. All credentials, environment files, workbook paths, Salesforce data, Tableau resources, and company-specific information have been excluded for security and privacy purposes.
+This repository contains automation logic only. Credentials, company data, workbook files, and environment-specific configuration are intentionally excluded from source control for security and privacy purposes.

@@ -12,17 +12,18 @@ import tableauserverclient as TSC
 from simple_salesforce import Salesforce
 from rapidfuzz import process
 from colorama import init as colorama_init, Fore, Style
+import truststore
 
+truststore.inject_into_ssl()
 colorama_init(autoreset=True)
 
 # ============================================================================
 # CONFIG
 # ============================================================================
+load_dotenv()
 
-load_dotenv(r"C:\Users\emp35107\OneDrive - NORMA Group\Documents\salesforce.env")
-load_dotenv(r"C:\Users\emp35107\OneDrive - NORMA Group\Documents\tableau.env")
 
-WB_PATH = r"C:\Users\emp35107\OneDrive - NORMA Group\Documents\PPMs.xlsx"
+WB_PATH = os.getenv("WB_PATH")
 
 SF_USERNAME = os.getenv("SF_USERNAME")
 SF_PASSWORD = os.getenv("SF_PASSWORD")
@@ -34,11 +35,11 @@ TABLEAU_PAT_NAME = os.getenv("TABLEAU_PAT_NAME")
 TABLEAU_PAT_SECRET = os.getenv("TABLEAU_PAT_SECRET")
 TABLEAU_SITE = os.getenv("TABLEAU_SITE_CONTENTURL", "")
 
-TABLEAU_RMA_VIEW_ID = "30de1fa1-c6bd-4b5a-bfe8-020da690af8d"
-TABLEAU_SHIPMENT_VIEW_ID = "41b7e54e-3da8-4b53-bfaf-047410bb4fd8"
-TABLEAU_PRODUCT_VIEW_ID = "241e5cc1-6d7c-484a-99ad-d5700c3fd281"
+TABLEAU_RMA_VIEW_ID = os.getenv("TABLEAU_RMA_VIEW_ID")
+TABLEAU_SHIPMENT_VIEW_ID = os.getenv("TABLEAU_SHIPMENT_VIEW_ID")
+TABLEAU_PRODUCT_VIEW_ID = os.getenv("TABLEAU_PRODUCT_VIEW_ID")
 
-CYCLE_INTERVAL_SECONDS = 3600
+CYCLE_INTERVAL_SECONDS = CYCLE_INTERVAL_SECONDS = int(os.getenv("CYCLE_INTERVAL_SECONDS", "3600"))
 
 # ============================================================================
 # SHARED HELPERS
@@ -171,13 +172,32 @@ def rma_collect_case_comments(sf, case_ids):
 
     return comments_map
 
-def rma_derive_source(row):
+def resolve_part_source(row):
+    """
+    Determine the 'source' (Mfg Plant Name or Supplier) for a product row
+    based on Part Category ('M' = made in-house, 'B' = bought-out).
+
+    Bought-out rows normally have a Supplier value. As a failsafe (this
+    should rarely/never trigger -- almost every product cleanly falls into
+    one category with its matching field populated), a bought-out row with
+    a blank/null Supplier falls back to Mfg Plant Name instead of emitting
+    a blank or literal "nan".
+    """
     pc = str(row.get("Part Category", "")).upper()
+    mfg = row.get("Mfg Plant Name", "")
+    supplier = row.get("Supplier", "")
+    mfg = "" if pd.isna(mfg) else str(mfg).strip()
+    supplier = "" if pd.isna(supplier) else str(supplier).strip()
+
     if pc == "M":
-        return str(row.get("Mfg Plant Name", ""))
+        return mfg
     if pc == "B":
-        return str(row.get("Supplier", ""))
+        return supplier if supplier else mfg
     return ""
+
+
+def rma_derive_source(row):
+    return resolve_part_source(row)
 
 # ============================================================================
 # SUBJECT PARSING HELPERS
@@ -246,13 +266,7 @@ def lookup_product_by_stock_code(stock_code, product_df, stock_codes, normalized
     for i, norm_code in enumerate(normalized_codes):
         if norm_input == norm_code:
             row = product_df.iloc[i]
-            pc = str(row.get("Part Category", "")).upper()
-            if pc == "M":
-                source = str(row.get("Mfg Plant Name", "")).strip()
-            elif pc == "B":
-                source = str(row.get("Supplier", "")).strip()
-            else:
-                source = ""
+            source = resolve_part_source(row)
             category = str(row.get("Category", "")).strip()
             part_category = str(row.get("Part Category", "")).strip()
             return {
@@ -274,13 +288,7 @@ def fuzzy_match_product(text, product_df, stock_codes, normalized_codes, thresho
     if best:
         matched_norm, score, idx = best
         row = product_df.iloc[idx]
-        pc = str(row.get("Part Category", "")).upper()
-        if pc == "M":
-            source = str(row.get("Mfg Plant Name", "")).strip()
-        elif pc == "B":
-            source = str(row.get("Supplier", "")).strip()
-        else:
-            source = ""
+        source = resolve_part_source(row)
         category = str(row.get("Category", "")).strip()
         part_category = str(row.get("Part Category", "")).strip()
         return {

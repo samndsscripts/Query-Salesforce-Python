@@ -1,0 +1,8 @@
+colorama>=0.4.6
+pandas>=2.3.0
+python-dotenv>=1.1.0
+rapidfuzz>=3.14.0
+simple-salesforce>=1.12.0
+tableauserverclient>=0.38
+truststore>=0.10.0
+xlwings>=0.33.0

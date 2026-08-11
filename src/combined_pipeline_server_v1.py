@@ -20,10 +20,10 @@ colorama_init(autoreset=True)
 # ============================================================================
 # CONFIG
 # ============================================================================
-load_dotenv(r"C:\Users\samuel.cooper\OneDrive - Advanced Drainage Systems\Documents\salesforce.env")
-load_dotenv(r"C:\Users\samuel.cooper\OneDrive - Advanced Drainage Systems\Documents\tableau.env")
+load_dotenv()
 
-WB_PATH = r"C:\Users\samuel.cooper\OneDrive - Advanced Drainage Systems\Documents\PPMs.xlsx"
+WB_PATH = os.getenv("WB_PATH")
+
 
 SF_USERNAME = os.getenv("SF_USERNAME")
 SF_PASSWORD = os.getenv("SF_PASSWORD")
@@ -35,11 +35,11 @@ TABLEAU_PAT_NAME = os.getenv("TABLEAU_PAT_NAME")
 TABLEAU_PAT_SECRET = os.getenv("TABLEAU_PAT_SECRET")
 TABLEAU_SITE = os.getenv("TABLEAU_SITE_CONTENTURL", "")
 
-TABLEAU_RMA_VIEW_ID = "30de1fa1-c6bd-4b5a-bfe8-020da690af8d"
-TABLEAU_SHIPMENT_VIEW_ID = "41b7e54e-3da8-4b53-bfaf-047410bb4fd8"
-TABLEAU_PRODUCT_VIEW_ID = "241e5cc1-6d7c-484a-99ad-d5700c3fd281"
+TABLEAU_RMA_VIEW_ID = os.getenv("TABLEAU_RMA_VIEW_ID")
+TABLEAU_SHIPMENT_VIEW_ID = os.getenv("TABLEAU_SHIPMENT_VIEW_ID")
+TABLEAU_PRODUCT_VIEW_ID = os.getenv("TABLEAU_PRODUCT_VIEW_ID")
 
-CYCLE_INTERVAL_SECONDS = 3600
+CYCLE_INTERVAL_SECONDS = CYCLE_INTERVAL_SECONDS = int(os.getenv("CYCLE_INTERVAL_SECONDS", "3600"))
 
 # ============================================================================
 # SHARED HELPERS

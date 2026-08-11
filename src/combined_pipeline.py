@@ -12,7 +12,7 @@ import tableauserverclient as TSC
 from simple_salesforce import Salesforce
 from rapidfuzz import process
 from colorama import init as colorama_init, Fore, Style
-
+import truststore
 colorama_init(autoreset=True)
 
 # ============================================================================

@@ -19,10 +19,11 @@ colorama_init(autoreset=True)
 # CONFIG
 # ============================================================================
 
-load_dotenv(r"C:\Users\emp35107\OneDrive - NORMA Group\Documents\salesforce.env")
-load_dotenv(r"C:\Users\emp35107\OneDrive - NORMA Group\Documents\tableau.env")
+load_dotenv(r"C:\Users\samuel.cooper\OneDrive - Advanced Drainage Systems\Documents\salesforce.env")
+load_dotenv(r"C:\Users\samuel.cooper\OneDrive - Advanced Drainage Systems\Documents\tableau.env")
 
-WB_PATH = r"C:\Users\emp35107\OneDrive - NORMA Group\Documents\PPMs.xlsx"
+WB_PATH = r"C:\Users\samuel.cooper\OneDrive - Advanced Drainage Systems\Documents\PPMs.xlsx"
+
 
 SF_USERNAME = os.getenv("SF_USERNAME")
 SF_PASSWORD = os.getenv("SF_PASSWORD")

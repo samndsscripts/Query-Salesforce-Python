@@ -20,12 +20,10 @@ colorama_init(autoreset=True)
 # ============================================================================
 # CONFIG
 # ============================================================================
+load_dotenv()
 
-load_dotenv(r"C:\Users\samuel.cooper\OneDrive - Advanced Drainage Systems\Documents\salesforce.env")
-load_dotenv(r"C:\Users\samuel.cooper\OneDrive - Advanced Drainage Systems\Documents\tableau.env")
 
-WB_PATH = r"C:\Users\samuel.cooper\OneDrive - Advanced Drainage Systems\Documents\PPMs.xlsx"
-
+WB_PATH = os.getenv("WB_PATH")
 
 SF_USERNAME = os.getenv("SF_USERNAME")
 SF_PASSWORD = os.getenv("SF_PASSWORD")
@@ -41,7 +39,7 @@ TABLEAU_RMA_VIEW_ID = os.getenv("TABLEAU_RMA_VIEW_ID")
 TABLEAU_SHIPMENT_VIEW_ID = os.getenv("TABLEAU_SHIPMENT_VIEW_ID")
 TABLEAU_PRODUCT_VIEW_ID = os.getenv("TABLEAU_PRODUCT_VIEW_ID")
 
-CYCLE_INTERVAL_SECONDS = 3600
+CYCLE_INTERVAL_SECONDS = os.getenv("CYCLE_INTERVAL_SECONDS")
 
 # ============================================================================
 # SHARED HELPERS

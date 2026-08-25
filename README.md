@@ -1,216 +1,101 @@
-# Salesforce & Tableau Data Synchronization Pipeline
+# RMA Sync — Salesforce & Tableau Reporting Pipeline
 
-## Overview
+Reconciling RMA and shipment activity across Salesforce, Tableau, and a shared Excel workbook used to mean manually cross-referencing three systems by hand. This pipeline pulls from all three, resolves product identity across inconsistent fields using a tiered matching strategy, deduplicates against what's already reported, and appends clean records straight into the reporting workbook.
 
-This Python automation combines Salesforce, Tableau, and Excel into a single reporting workflow. The project retrieves RMA (Return Material Authorization) and shipment data, enriches records using multiple matching strategies, prevents duplicates, and updates centralized reporting workbooks.
+## The Problem
 
-The automation is designed to reduce manual reporting effort while improving data quality and consistency across business systems.
+RMA (Return Material Authorization) and shipment data live in Salesforce and Tableau, but neither system is the reporting source of truth — Excel is. Building that report by hand means opening cases one at a time, cross-referencing product codes that are sometimes structured and sometimes buried in a subject line or case comment, and manually checking whether a record has already been logged. It's slow and error-prone, and product identification quietly degrades whenever the structured `Item` field is missing.
 
----
+## What It Does
 
-## Features
+- **RMA processing** — pulls new RMA cases from Salesforce, resolves product identity, collects case comments, and appends deduplicated records to the reporting workbook
+- **Shipment processing** — pulls shipment records from Tableau, cleans and standardizes them, derives supplier/manufacturing source, and generates unique shipment identifiers
+- **Tiered product resolution** — falls back through four matching strategies so a missing structured field doesn't mean a missing product match
+- **Duplicate prevention** — checks incoming records against what's already in the workbook before appending anything
+- **Traceability** — every appended RMA record includes a hyperlink back to its source Salesforce case
 
-### RMA Processing
+## How It Works
 
-- Retrieves new RMA cases from Salesforce.
-- Prevents duplicate processing using existing Excel records.
-- Pulls RMA enrichment data from Tableau.
-- Collects Salesforce case comments.
-- Resolves product information using direct and fuzzy matching techniques.
-- Creates hyperlinks back to Salesforce records.
-- Appends processed data into reporting tables.
+1. **Case retrieval** — new RMA cases are pulled from Salesforce (cases, comments, customer/product/financial fields)
+2. **Product resolution** — each case runs through a tiered fallback: direct `Item` field lookup → subject-line stock code extraction → fuzzy match against the case description → fuzzy match against case comments
+3. **Enrichment** — resolved cases are joined against Tableau's RMA and shipment reference data
+4. **Deduplication** — candidate records are checked against existing workbook rows before being written
+5. **Write-back** — new RMA and shipment rows are appended to the reporting workbook, with RMA rows hyperlinked back to their Salesforce case
 
-### Shipment Processing
-
-- Retrieves shipment records from Tableau.
-- Cleans and standardizes source data.
-- Derives supplier and manufacturing source information.
-- Generates unique shipment identifiers.
-- Prevents duplicate entries.
-- Appends new shipment activity to Excel reporting tables.
-
-### Product Resolution
-
-The automation uses a tiered matching strategy:
-
-1. Item field lookup
-2. Subject line stock code extraction
-3. Fuzzy matching against case descriptions
-4. Fuzzy matching against case comments
-
-This approach improves product identification when structured data is incomplete.
-
----
-
-## Data Sources
-
-### Salesforce
-
-Used for:
-
-- RMA Cases
-- Case Comments
-- Customer Information
-- Product Data
-- Financial Information
-
-### Tableau
-
-Used for:
-
-- RMA Enrichment Data
-- Shipment Data
-- Product Reference Tables
-
-### Excel
-
-Used as the final reporting and tracking repository.
-
----
-
-## Repository Structure
-
-```text
-Query-Salesforce-Python/
-│
-├── README.md
-│
-├── src/
-│   ├── combined_pipeline.py
-│   └── combined_pipeline_server_v1.py
-│
-├── archive/
-│   ├── rma.py
-│   ├── shipments.py
-│   ├── report_automation_9.py
-│   ├── report_automation_10.py
-│   ├── report_automation_11.py
-│   └── report_automation_12.py
-│
-└── miscellaneous utility scripts
 ```
-
----
-
-## Active Scripts
-
-### `/src/combined_pipeline.py`
-
-Primary production pipeline that:
-
-- Connects to Salesforce
-- Connects to Tableau
-- Processes new RMAs
-- Processes shipment data
-- Updates reporting workbooks
-- Runs on a scheduled cycle
-
-### `/src/combined_pipeline_server_v1.py`
-
-Server-oriented implementation of the combined pipeline designed for automated execution environments.
-
----
-
-## Archive
-
-The `/archive` folder contains previous versions and legacy components retained for reference purposes:
-
-- Earlier RMA workflows
-- Earlier shipment workflows
-- Historical report automation versions
-- Development and testing scripts
-
-These files are not actively maintained.
-
----
-
-## Automation Workflow
-
-```text
 Salesforce
      │
      ▼
 Case Retrieval
      │
      ▼
-Product Resolution
+Product Resolution (tiered fallback)
      │
      ├── Tableau Product Data
      ├── Tableau RMA Data
      └── Tableau Shipment Data
      │
      ▼
-Data Enrichment
+Deduplication Check
      │
      ▼
 Excel Reporting Workbook
 ```
 
----
+## Stack
 
-## Technologies Used
+| Layer | Tech | Why |
+|---|---|---|
+| Salesforce access | simple-salesforce | Straightforward REST API wrapper, no heavier SDK needed for case/comment retrieval |
+| Tableau access | Tableau Server Client (TSC) | Official client for pulling published data sources without hitting the raw REST API directly |
+| Data handling | Pandas | Cleaning, standardizing, and joining data across three sources |
+| Product matching | RapidFuzz | Fast fuzzy matching for the fallback tiers where structured fields are missing |
+| Excel I/O | xlwings | Writes directly into a live workbook (formatting, hyperlinks) rather than just dumping a flat file |
+| Config | python-dotenv | Keeps Salesforce/Tableau credentials and workbook paths out of source control |
+| Logging | Colorama | Readable console output for a script run on a schedule, not just interactively |
 
-- Python
-- Pandas
-- xlwings
-- Tableau Server Client (TSC)
-- Simple Salesforce
-- RapidFuzz
-- python-dotenv
-- Colorama
+## Key Technical Decisions
 
----
+**Why a tiered matching strategy instead of relying on the `Item` field?** The structured `Item` field is frequently blank or inconsistent in practice. Falling back through subject-line extraction and then fuzzy matching against description/comment text means a case still gets identified even when the clean path fails — at the cost of more matching logic to maintain.
 
-## Version Control Workflow
+**Why xlwings instead of writing a flat CSV/openpyxl file?** The reporting workbook is a live, shared artifact with existing formatting and formulas others depend on. xlwings can append to it in place — including writing real hyperlinks back to Salesforce — without regenerating the whole file and losing everything downstream that depends on it.
 
-This repository is maintained across multiple development machines.
+**Why check for duplicates before appending instead of relying on Salesforce/Tableau as the source of truth for "already processed"?** The workbook, not either source system, is what people actually read from. A case or shipment could be re-pulled on a later run; checking against existing workbook rows is what actually prevents double-counting in the report itself.
 
-Before starting work:
+## Repository Structure
 
-```bash
-git pull
+```
+Query-Salesforce-Python/
+├── README.md
+├── src/
+│   ├── combined_pipeline.py            # primary pipeline: Salesforce + Tableau → workbook
+│   └── combined_pipeline_server_v1.py  # server-oriented variant for scheduled execution
+└── archive/                            # earlier RMA/shipment workflows, kept for reference
 ```
 
-After making changes:
+## Local Setup
 
-```bash
-git add .
-git commit -m "Description of changes"
-git push
+```
+# 1. Clone and configure
+cp .env.example .env
+# Fill in: Salesforce credentials, Tableau credentials, workbook path
+
+# 2. Install dependencies
+pip install -r requirements.txt
+
+# 3. Run the pipeline
+python src/combined_pipeline.py
 ```
 
-Check repository status:
+## What I'd Do Next
 
-```bash
-git status
-```
-
----
-
-## Business Benefits
-
-- Reduces manual reporting effort
-- Improves data consistency
-- Consolidates multiple enterprise systems
-- Automates data enrichment
-- Maintains a deduplicated dataset
-- Provides traceability back to Salesforce records
-- Delivers near real-time reporting updates
-
----
+- **Replace the manual/scheduled run with an event trigger** — Salesforce supports outbound messages/platform events on new RMA cases; the pipeline is already idempotent (dedup-checked) so it could safely run per-event instead of on a fixed cycle
+- **Move matching confidence into the output** — the tiered fallback currently resolves silently; surfacing which tier matched each record (direct vs. fuzzy) would let reviewers spot low-confidence matches instead of trusting every row equally
+- **Replace xlwings with a database-backed report** — a live workbook works at current scale, but a proper table (even SQLite) would remove the single-writer bottleneck and make historical querying possible without opening Excel
 
 ## Configuration
 
-Sensitive information such as:
-
-- Salesforce credentials
-- Tableau credentials
-- Workbook paths
-- Environment variables
-
-is stored outside source control using `.env` files.
-
----
+Salesforce credentials, Tableau credentials, workbook paths, and other environment-specific settings are stored outside source control using `.env` files — see `.env.example` for the required keys.
 
 ## Disclaimer
 

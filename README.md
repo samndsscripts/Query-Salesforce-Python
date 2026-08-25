@@ -1,45 +1,43 @@
 # RMA Sync — Salesforce & Tableau Reporting Pipeline
 
-Reconciling RMA and shipment activity across Salesforce, Tableau, and a shared Excel workbook used to mean manually cross-referencing three systems by hand. This pipeline pulls from all three, resolves product identity across inconsistent fields using a tiered matching strategy, deduplicates against what's already reported, and appends clean records straight into the reporting workbook.
+RMA and shipment data live in two systems that each tell half the story — Salesforce is where the sales team logs the human side of a return (comments, photos, files), Tableau is connected directly to the database and holds the actual shipment/return quantities. This pipeline pulls from both, resolves product identity across inconsistent fields using a tiered matching strategy, and appends clean records into a shared workbook that quality managers actively review and correct — without stepping on the corrections they've already made.
 
 ## The Problem
 
-RMA (Return Material Authorization) and shipment data live in Salesforce and Tableau, but neither system is the reporting source of truth — Excel is. Building that report by hand means opening cases one at a time, cross-referencing product codes that are sometimes structured and sometimes buried in a subject line or case comment, and manually checking whether a record has already been logged. It's slow and error-prone, and product identification quietly degrades whenever the structured `Item` field is missing.
+Building the RMA/shipment report by hand means opening cases one at a time in Salesforce, cross-referencing product codes and quantities against Tableau (which is sometimes a clean match, sometimes not — Salesforce cases can exist before or without a matching database record), and manually checking whether a record has already been logged. On top of that, the resulting report isn't just read passively — it feeds a Power BI dashboard and is where quality managers actually work: filtering to their cases, clicking through to the source Salesforce case, correcting quantities when the pipeline had to fall back to logic instead of a direct Tableau match, and disapproving cases entirely so they don't count toward KPIs. Any automation here has to respect that this workbook has humans actively editing it, not just append blindly.
 
 ## What It Does
 
-- **RMA processing** — pulls new RMA cases from Salesforce, resolves product identity, collects case comments, and appends deduplicated records to the reporting workbook
-- **Shipment processing** — pulls shipment records from Tableau, cleans and standardizes them, derives supplier/manufacturing source, and generates unique shipment identifiers
-- **Tiered product resolution** — falls back through four matching strategies so a missing structured field doesn't mean a missing product match
-- **Duplicate prevention** — checks incoming records against what's already in the workbook before appending anything
-- **Traceability** — every appended RMA record includes a hyperlink back to its source Salesforce case
+- **RMA processing** — pulls new RMA cases from Salesforce, resolves product identity, collects case comments, and appends new records to the shared workbook
+- **Shipment processing** — pulls shipment records from Tableau (database-backed), cleans and standardizes them, derives supplier/manufacturing source, and generates unique shipment identifiers
+- **Tiered product resolution** — falls back through four matching strategies so a case without a clean database-side match still gets identified
+- **Duplicate-safe appending** — checks the workbook for existing records before appending, so re-runs don't create duplicate rows
+- **Preserves manager review** — quantity corrections and case disapprovals made directly in the workbook are not touched or overwritten by later pipeline runs
+- **Traceability** — every appended RMA record includes a hyperlink back to its source Salesforce case, so managers can review without leaving the sheet
 
 ## How It Works
 
 1. **Case retrieval** — new RMA cases are pulled from Salesforce (cases, comments, customer/product/financial fields)
 2. **Product resolution** — each case runs through a tiered fallback: direct `Item` field lookup → subject-line stock code extraction → fuzzy match against the case description → fuzzy match against case comments
-3. **Enrichment** — resolved cases are joined against Tableau's RMA and shipment reference data
-4. **Deduplication** — candidate records are checked against existing workbook rows before being written
-5. **Write-back** — new RMA and shipment rows are appended to the reporting workbook, with RMA rows hyperlinked back to their Salesforce case
+3. **Enrichment** — resolved cases are joined against Tableau's database-backed RMA and shipment data
+4. **Existing-record check** — candidate records are checked against the workbook so already-logged cases aren't re-appended, and rows a manager has already corrected or disapproved are left alone
+5. **Write-back** — new RMA and shipment rows are appended, with RMA rows hyperlinked back to their Salesforce case, ready for quality manager review
+6. **Downstream** — the workbook feeds a Power BI dashboard; managers filter to their own cases, verify or correct quantities, and can disapprove a case to exclude it from KPI reporting entirely
 
 ```
-Salesforce
-     │
-     ▼
-Case Retrieval
-     │
-     ▼
-Product Resolution (tiered fallback)
-     │
-     ├── Tableau Product Data
-     ├── Tableau RMA Data
-     └── Tableau Shipment Data
-     │
-     ▼
-Deduplication Check
-     │
-     ▼
-Excel Reporting Workbook
+Salesforce (human side: cases, comments, photos)   Tableau (database-backed: quantities, shipments)
+                    │                                              │
+                    ▼                                              │
+         Product Resolution (tiered fallback) ◄────────────────────┘
+                    │
+                    ▼
+       Existing-Record Check (skip already-logged / manager-edited rows)
+                    │
+                    ▼
+         Excel Workbook  ──────►  Power BI Dashboard
+                    │
+                    ▼
+   Quality Manager Review (correct quantities, disapprove cases from KPIs)
 ```
 
 ## Stack
@@ -60,7 +58,9 @@ Excel Reporting Workbook
 
 **Why xlwings instead of writing a flat CSV/openpyxl file?** The reporting workbook is a live, shared artifact with existing formatting and formulas others depend on. xlwings can append to it in place — including writing real hyperlinks back to Salesforce — without regenerating the whole file and losing everything downstream that depends on it.
 
-**Why check for duplicates before appending instead of relying on Salesforce/Tableau as the source of truth for "already processed"?** The workbook, not either source system, is what people actually read from. A case or shipment could be re-pulled on a later run; checking against existing workbook rows is what actually prevents double-counting in the report itself.
+**Why check the workbook itself for existing records, rather than tracking "already processed" separately?** The workbook isn't a passive output — quality managers actively edit it (correcting quantities, disapproving cases), and those edits have to survive the next pipeline run untouched. Checking against the workbook directly, rather than a separate log, is what lets the pipeline tell "already here, leave it" apart from "new, append it" without a second system to keep in sync.
+
+**Why does it matter that the pipeline never overwrites a manager's quantity correction or disapproval?** Those edits exist specifically because the automated match wasn't reliable enough on its own — a quantity derived from fallback logic instead of a direct Tableau match, or a case a manager determined shouldn't count toward KPIs. If a later run silently overwrote that correction, the KPI numbers downstream in Power BI would quietly become wrong again, defeating the entire reason the review step exists.
 
 ## Repository Structure
 
